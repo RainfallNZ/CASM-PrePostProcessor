@@ -1,0 +1,34 @@
+---
+title: "R Notebook to preprocess water quality data for use with CASM"
+output: html_notebook
+---
+
+Load libraries
+```{r}
+
+```
+
+
+Set directories and data file names
+```{r}
+
+```
+
+
+load data
+```{r}
+
+```
+
+
+I need to create an excel table of CASM-Nodes, CASM-Reach-Names, CASM-Reach-Locations, CASM-Reach-Areas, CASM-Reach-Exp.Coeff
+```{r}
+
+```
+
+I need to create an excel table of CASM-Nodes, CASM-Reach-Names, CASM-Reach-Locations, CASM-Reach-Areas, CASM-Reach-Exp.Coeff
+```{r}
+
+```
+
+
