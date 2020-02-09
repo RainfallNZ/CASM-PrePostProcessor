@@ -5,19 +5,83 @@ output: html_notebook
 
 Load libraries
 ```{r}
+if (!require(rgdal)) install.packages("rgdal"); library(rgdal)                #used for spatial processing
+if (!require(gdalUtils)) install.packages("gdalUtils"); library(gdalUtils)    #used for spatial processing
+if (!require(sp)) install.packages("sp"); library(sp)                         #used for spatial processing
+```
 
+Function to crawl the REC network downstream
+```{r}
+DownstreamReachFinder <- function(MyREC=MyREC,SourceReach=7039931){ #The reach ID is for the Manawatu at Teachers College water quality reporting site
+  #browser()
+  #Initialise the vector of reach ID's downstream of the source
+  DownstreamReaches <- SourceReach
+  
+  #Identify the row index of the source reach
+  SourceSiteReachIndex<-which(MyREC$NZREACH==SourceReach)
+  
+  #Identify the reach immediately downstream of the source reach
+  downstream_index<-which(MyREC$NZFNODE==MyREC$NZTNODE[SourceSiteReachIndex])
+  
+  #downstream_reach<-MyREC$nzsegment[downstream_index]
+  
+  #Sequentially work downstream
+  while (length(downstream_index)>0) {
+     DownstreamReaches <- c(DownstreamReaches,MyREC$NZREACH[downstream_index])
+     downstream_index<-which(MyREC$NZFNODE==MyREC$NZTNODE[downstream_index])
+     #downstream_index<-next_downstream_index
+  } #end of while
+  return(DownstreamReaches)
+}
 ```
 
 
 Set directories and data file names
 ```{r}
+#Set the project directory
+ProjectDirectory <- "C:\\Users\\Owner\\Documents\\Projects\\LWP\\Horizons"
+#Set the data directory
+DataDirectory     <- file.path(ProjectDirectory, "Data")
+#Set the GIS directory
+GISDataDirectory  <- file.path(DataDirectory,"GIS")
 
+#REC data is available from the MfE data service. See https://data.mfe.govt.nz/layer/51826-river-environment-classification-manawatu-2010/ and https://data.mfe.govt.nz/layer/51847-river-environment-classification-watershed-manawatu-2010/
+
+REC_rivers <- "mfe-river-environment-classification-manawatu-2010-SHP"
+REC_Catchments <- "mfe-river-environment-classification-watershed-manawatu-2010-SHP"
 ```
 
 
 load data
 ```{r}
+RECReachNetwork <- readOGR(dsn =file.path(GISDataDirectory,REC_rivers),
+                           layer = "river-environment-classification-manawatu-2010")
+#RECReachNetwork <- spTransform(RECReachNetwork,CRS("+init=epsg:2193") )
 
+RECWatersheds <- readOGR(dsn = file.path(GISDataDirectory,REC_Catchments),
+                         layer = "mfe-river-environment-classification-watershed-manawatu-2010")
+#RECWatersheds <- spTransform(RECWatersheds,CRS("+init=epsg:2193") )
+
+#Load the Horizon total nitorigen load measurement sites, previously prepared by Caroline Fraser and called "HZLoads
+load(file.path(DataDirectory,"N_ExpCoeff_Est_HZ_Feb20.rdata"))
+#Remove the duplicate sites
+PointsOfInterest <- HZLoads[!duplicated(HZLoads$NZReach),]
+
+#Create a spatial points object set to NZTM
+PointsOfInterestSpatial <-SpatialPointsDataFrame(coords = PointsOfInterest[,c("NZTM.X","NZTM.Y")],
+                                               data = PointsOfInterest[,1:3],
+                                               proj4string = CRS("+init=epsg:2193"))
+
+```
+
+
+From the load sites, create the required network
+```{r}
+LoadNetwork <- lapply(PointsOfInterest$NZReach, function(x) {DownstreamReachFinder(MyREC = RECReachNetwork, SourceReach = x)} )
+CompleteNetwork <- unlist(LoadNetwork)
+CompleteNetwork <- CompleteNetwork[!duplicated(CompleteNetwork)]
+
+CompleteSpatialNetwork <- RECReachNetwork[RECReachNetwork$NZREACH %in% CompleteNetwork,]
 ```
 
 
