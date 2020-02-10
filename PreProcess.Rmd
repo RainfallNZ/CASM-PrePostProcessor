@@ -12,23 +12,33 @@ if (!require(sp)) install.packages("sp"); library(sp)                         #u
 
 Function to crawl the REC network downstream
 ```{r}
-DownstreamReachFinder <- function(MyREC=MyREC,SourceReach=7039931){ #The reach ID is for the Manawatu at Teachers College water quality reporting site
-  #browser()
+#' A function to find the REC network downstream of a reach
+#'
+#'This function generates a vector of the reach ID numbers (NZREACH attribute) downstream of a reach. It uses the REC V2.4 network. See \href{https://niwa.co.nz/freshwater-and-estuaries/management-tools/river-environment-classification-0}{NIWA REC V2} for details about REC V2.
+#'
+#'@param RECNetwork An REC V2 network (either dataframe of spatial dataframe), with at least NZREACH, NZTNODE and NZFNODE attributes
+#'@param SourceReach The reach number (i.e. NZREACH attribute) of the reach for which the downstream network is required
+#'@author Tim Kerr, \email{Tim.Kerr@@Rainfall.NZ}
+#'@return A vector of reach numbers (NZREACH attributes)
+#'@keywords REC River Environment Classification
+#'@export
+DownstreamReachFinder <- function(RECNetwork=RECReachNetwork,SourceReach=7039931){ #The reach ID is for the Manawatu at Teachers College water quality reporting site
+
   #Initialise the vector of reach ID's downstream of the source
   DownstreamReaches <- SourceReach
   
   #Identify the row index of the source reach
-  SourceSiteReachIndex<-which(MyREC$NZREACH==SourceReach)
+  SourceSiteReachIndex<-which(RECNetwork$NZREACH==SourceReach)
   
   #Identify the reach immediately downstream of the source reach
-  downstream_index<-which(MyREC$NZFNODE==MyREC$NZTNODE[SourceSiteReachIndex])
+  downstream_index<-which(RECNetwork$NZFNODE==RECNetwork$NZTNODE[SourceSiteReachIndex])
   
-  #downstream_reach<-MyREC$nzsegment[downstream_index]
+  #downstream_reach<-RECNetwork$nzsegment[downstream_index]
   
   #Sequentially work downstream
   while (length(downstream_index)>0) {
-     DownstreamReaches <- c(DownstreamReaches,MyREC$NZREACH[downstream_index])
-     downstream_index<-which(MyREC$NZFNODE==MyREC$NZTNODE[downstream_index])
+     DownstreamReaches <- c(DownstreamReaches,RECNetwork$NZREACH[downstream_index])
+     downstream_index<-which(RECNetwork$NZFNODE==RECNetwork$NZTNODE[downstream_index])
      #downstream_index<-next_downstream_index
   } #end of while
   return(DownstreamReaches)
@@ -38,11 +48,11 @@ DownstreamReachFinder <- function(MyREC=MyREC,SourceReach=7039931){ #The reach I
 Crawl up the network and define the tributaries
 Start from the bottom and work up to the first intersection. Decide which branch is the mainstem and which is a tributary based on catchment area, then give a new number to the smaller trib and keep going
 ```{r}
-NetworkLabeler <- function(MyREC=MyREC){    #MyREC <- CompleteSpatialNetwork
+NetworkLabeler <- function(RECNetwork=MyREC){
 
   
   #Find the row indices of all the outlet reach's by finding which "to" nodes  don't have a corresponding "from" node
-  OutletReachIndices <- which(!MyREC$NZTNODE %in% MyREC$NZFNODE)
+  OutletReachIndices <- which(!RECNetwork$NZTNODE %in% RECNetwork$NZFNODE)
   names(OutletReachIndices) <- 1:length(OutletReachIndices)
   
   #Crawl each network in turn
@@ -51,25 +61,25 @@ NetworkLabeler <- function(MyREC=MyREC){    #MyREC <- CompleteSpatialNetwork
     RowNumber          <- 1
     CurrentLabel       <- 1
     Labels             <- data.frame(NZREACH=NA,Label=NA)
-    Labels[RowNumber,] <- c(MyREC$NZREACH[OutletReachIndex],1)
+    Labels[RowNumber,] <- c(RECNetwork$NZREACH[OutletReachIndex],1)
     
     CurrentReachIndex  <- OutletReachIndex
-    upstream_indices   <- which(MyREC$NZTNODE==MyREC$NZFNODE[CurrentReachIndex])
+    upstream_indices   <- which(RECNetwork$NZTNODE==RECNetwork$NZFNODE[CurrentReachIndex])
     LeftToDoIndices    <- upstream_indices
     
     while (length(LeftToDoIndices) > 0) {
       #Check if there are some upstream indices
-      BiggestBranchIndex <- which.max(MyREC$CATCHAREA[upstream_indices])
+      BiggestBranchIndex <- which.max(RECNetwork$CATCHAREA[upstream_indices])
       
       CurrentReachIndex  <- upstream_indices[BiggestBranchIndex]
       LeftToDoIndices    <- LeftToDoIndices[LeftToDoIndices != CurrentReachIndex]
       RowNumber          <- RowNumber + 1
       
-      Labels[RowNumber,] <- c(MyREC$NZREACH[CurrentReachIndex],CurrentLabel)
-      upstream_indices   <- which(MyREC$NZTNODE==MyREC$NZFNODE[CurrentReachIndex])
+      Labels[RowNumber,] <- c(RECNetwork$NZREACH[CurrentReachIndex],CurrentLabel)
+      upstream_indices   <- which(RECNetwork$NZTNODE==RECNetwork$NZFNODE[CurrentReachIndex])
       if (length(upstream_indices) == 0) {
         CurrentLabel = CurrentLabel + 1
-        upstream_indices <- LeftToDoIndices[which.max(MyREC$CATCHAREA[LeftToDoIndices])]
+        upstream_indices <- LeftToDoIndices[which.max(RECNetwork$CATCHAREA[LeftToDoIndices])]
       } else {
         LeftToDoIndices <- c(upstream_indices,LeftToDoIndices)
       }
@@ -157,37 +167,52 @@ GISDataDirectory  <- file.path(DataDirectory,"GIS")
 
 #REC data is available from the MfE data service. See https://data.mfe.govt.nz/layer/51826-river-environment-classification-manawatu-2010/ and https://data.mfe.govt.nz/layer/51847-river-environment-classification-watershed-manawatu-2010/
 
-REC_rivers <- "mfe-river-environment-classification-manawatu-2010-SHP"
-REC_Catchments <- "mfe-river-environment-classification-watershed-manawatu-2010-SHP"
+REC_rivers <- "RECV2-Riverlines-Horizons"
+REC_Catchments <- "RECV2-Watersheds-Horizons"
+
+SubZones <- "Water_Management_Subzones"
 ```
 
 
 load data
 ```{r}
 RECReachNetwork <- readOGR(dsn =file.path(GISDataDirectory,REC_rivers),
-                           layer = "river-environment-classification-manawatu-2010")
+                           layer = "RECV2-Riverlines-Horizons")
 #RECReachNetwork <- spTransform(RECReachNetwork,CRS("+init=epsg:2193") )
 
 #RECWatersheds <- readOGR(dsn = file.path(GISDataDirectory,REC_Catchments),
-#                         layer = "mfe-river-environment-classification-watershed-manawatu-2010")
+#                         layer = "RECV2-Watersheds-Horizons")
 #RECWatersheds <- spTransform(RECWatersheds,CRS("+init=epsg:2193") )
 
 #Load the Horizon total nitorigen load measurement sites, previously prepared by Caroline Fraser and called "HZLoads
 load(file.path(DataDirectory,"N_ExpCoeff_Est_HZ_Feb20.rdata"))
 #Remove the duplicate sites
-PointsOfInterest <- HZLoads[!duplicated(HZLoads$NZReach),]
+MeasurementSites <- HZLoads[!duplicated(HZLoads$NZReach),]
 
 #Create a spatial points object set to NZTM
-PointsOfInterestSpatial <-SpatialPointsDataFrame(coords = PointsOfInterest[,c("NZTM.X","NZTM.Y")],
-                                               data = PointsOfInterest[,1:3],
+MeasurementSitesSpatial <-SpatialPointsDataFrame(coords = MeasurementSites[,c("NZTM.X","NZTM.Y")],
+                                               data = MeasurementSites[,1:3],
                                                proj4string = CRS("+init=epsg:2193"))
 
+#Load the point sources of nitrogen, previously prepared by Caroline Fraser. Unfortunately they don't have NZREACH data.
+PointSourceSites <- read.csv(file.path(DataDirectory,"PointSourcesSummaryPC2_YE2012_04.csv"))
+#Add a NZREACH attribute and look them up from the REC V2 data.
+PointSourceSites$NZREACH <- RECReachNetwork$NZREACH[RECReachNetwork$REACH_ID%in%PointSourceSites$nzsegment]
+#Create a spatial points object set to NZTM
+PointSourceSitesSpatial <-SpatialPointsDataFrame(coords = PointSourceSites[,c("NZTM.X","NZTM.Y")],
+                                               data = PointSourceSites[,1:5],
+                                               proj4string = CRS("+init=epsg:2193"))
+
+#Load the subzone polygons
+SubZonePolyons <- readOGR(dsn =file.path(GISDataDirectory,REC_rivers),
+                           layer = "river-environment-classification-manawatu-2010")
 ```
 
 
-From the load sites, create the required network
+From the load sites, point source sites, and water management subzones outlets, create the required network
 ```{r}
-LoadNetwork <- lapply(PointsOfInterest$NZReach, function(x) {DownstreamReachFinder(MyREC = RECReachNetwork, SourceReach = x)} )
+AllPoints <- c(MeasurementSites$NZReach, PointSourceSites$)
+LoadNetwork <- lapply(MeasurementSites$NZReach, function(x) {DownstreamReachFinder(RECNetwork = RECReachNetwork, SourceReach = x)} )
 CompleteNetwork <- unlist(LoadNetwork)
 CompleteNetwork <- CompleteNetwork[!duplicated(CompleteNetwork)]
 
