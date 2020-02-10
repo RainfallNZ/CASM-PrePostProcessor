@@ -14,7 +14,7 @@ Function to crawl the REC network downstream
 ```{r}
 #' A function to find the REC network downstream of a reach
 #'
-#'This function generates a vector of the reach ID numbers (NZREACH attribute) downstream of a reach. It uses the REC V2.4 network. See \href{https://niwa.co.nz/freshwater-and-estuaries/management-tools/river-environment-classification-0}{NIWA REC V2} for details about REC V2.
+#'This function generates a vector of the reach ID numbers (nzsegment attribute) downstream of a reach. It uses the REC V2.4 network. See \href{https://niwa.co.nz/freshwater-and-estuaries/management-tools/river-environment-classification-0}{NIWA REC V2} for details about REC V2.
 #'
 #'@param RECNetwork An REC V2 network (either dataframe of spatial dataframe), with at least NZREACH, NZTNODE and NZFNODE attributes
 #'@param SourceReach The reach number (i.e. NZREACH attribute) of the reach for which the downstream network is required
