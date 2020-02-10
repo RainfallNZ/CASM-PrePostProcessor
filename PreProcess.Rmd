@@ -35,6 +35,116 @@ DownstreamReachFinder <- function(MyREC=MyREC,SourceReach=7039931){ #The reach I
 }
 ```
 
+Crawl up the network and define the tributaries
+Start from the bottom and work up to the first intersection. Decide which branch is the mainstem and which is a tributary based on catchment area, then give a new number to the smaller trib and keep going
+```{r}
+NetworkLabeler <- function(MyREC=MyREC){    #MyREC <- CompleteSpatialNetwork
+
+  
+  #Find the row indices of all the outlet reach's by finding which "to" nodes  don't have a corresponding "from" node
+  OutletReachIndices <- which(!MyREC$NZTNODE %in% MyREC$NZFNODE)
+  names(OutletReachIndices) <- 1:length(OutletReachIndices)
+  
+  #Crawl each network in turn
+  ReachLabels <- lapply(OutletReachIndices, function(OutletReachIndex) {   #OutletReachIndex <- 39
+    #Initialise the label list
+    RowNumber          <- 1
+    CurrentLabel       <- 1
+    Labels             <- data.frame(NZREACH=NA,Label=NA)
+    Labels[RowNumber,] <- c(MyREC$NZREACH[OutletReachIndex],1)
+    
+    CurrentReachIndex  <- OutletReachIndex
+    upstream_indices   <- which(MyREC$NZTNODE==MyREC$NZFNODE[CurrentReachIndex])
+    LeftToDoIndices    <- upstream_indices
+    
+    while (length(LeftToDoIndices) > 0) {
+      #Check if there are some upstream indices
+      BiggestBranchIndex <- which.max(MyREC$CATCHAREA[upstream_indices])
+      
+      CurrentReachIndex  <- upstream_indices[BiggestBranchIndex]
+      LeftToDoIndices    <- LeftToDoIndices[LeftToDoIndices != CurrentReachIndex]
+      RowNumber          <- RowNumber + 1
+      
+      Labels[RowNumber,] <- c(MyREC$NZREACH[CurrentReachIndex],CurrentLabel)
+      upstream_indices   <- which(MyREC$NZTNODE==MyREC$NZFNODE[CurrentReachIndex])
+      if (length(upstream_indices) == 0) {
+        CurrentLabel = CurrentLabel + 1
+        upstream_indices <- LeftToDoIndices[which.max(MyREC$CATCHAREA[LeftToDoIndices])]
+      } else {
+        LeftToDoIndices <- c(upstream_indices,LeftToDoIndices)
+      }
+    }
+    return(Labels)
+  })
+
+
+  return(ReachLabels)
+}
+```
+
+Function to determine where each tributary connects to its parent river. This is needed to provide the river network connectivity table used by CASM.
+CASM understands a network in terms of Tributary Names, Confluence Names and Confluence Locations.
+Confluence Name is the name of the river that a tributary flows into.
+Confluence Location is the distance along the confluence from its start, that the tributary joins it.
+
+This can handle multiple wholly independent catchments (i.e. that are not connected).
+```{r}
+TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, TributaryLabelList = TribLabelList){
+  
+  #For each independent catchment, find the distance along the reach to the confluence
+  CatchmentTribLinkages <- lapply(seq_along(TributaryLabelList), function(CatchmentIndex) { 
+    
+    #Get the tributary labels for all REC reaches within the current independent catchment 
+    CatchmentTribLabels <- TributaryLabelList[[CatchmentIndex]]
+    
+    #Find all the unique tributary labels
+    UniqueTribs <- unique(CatchmentTribLabels$Label)
+    
+    #for each tributary find the minimum DISTSEA attribute from the REC data, the REC reach immediately downstream of the tributary, and the tributary label of the REC reach that is immediately downstream. This builds a matrix of 4 numbers for each tributary, giving the minimum DISTSEA, the lowest NZREACH, the highest NZREACH below the tributary, and the label of the tributary below (i.e. the confluence name)
+    ConfluenceTotalDistances <- sapply(UniqueTribs, function(TribLabel) {
+      
+      #Get the REC data for the current tributary
+      ReachData <- RECNetwork[RECNetwork$NZREACH %in% CatchmentTribLabels$NZREACH[CatchmentTribLabels$Label == TribLabel],]
+      
+      #Find the smallest DISTSEA attribute for the tributary
+      TribConnectionTotalDistance <- min(ReachData$DISTSEA)
+      
+      #Find which reach is the lowest in the tributary
+      LowestReach <- ReachData$NZREACH[which.min(ReachData$DISTSEA)]
+      
+      #Find the reach immediately below the lowest reach
+      ReachBelow <- RECNetwork$NZREACH[which(RECNetwork$NZFNODE == RECNetwork$NZTNODE[RECNetwork$NZREACH == LowestReach])]
+      
+      #Special case if it is the lowest tributary, as it is effectively the mainstem
+      if(length(ReachBelow)==0) {
+        ReachBelow <- NA
+        TribBelow <- 1 }
+      else {TribBelow <- CatchmentTribLabels$Label[CatchmentTribLabels$NZREACH == ReachBelow]}
+      
+      return(c(TribConnectionTotalDistance,LowestReach,ReachBelow,TribBelow))
+    })
+    
+    #CASM needs the distance of a confluence above the previous confluence. So the DISTSEA of the bottom of the parent tributary needs to be subtracted from the DISTSEA of the current tributary. This is achieved by using the tributary values just created for each catchment.
+    ConfluenceCorrectedDistances <- apply(ConfluenceTotalDistances, 2, function(x) {
+      CorrectedDistance <- x[1] - ConfluenceTotalDistances[1,x[4]] 
+    })
+    
+    #These confluence distances are added as a row to the rest of the tributary information
+    AllDistances <- rbind(ConfluenceTotalDistances,ConfluenceCorrectedDistances)
+    
+    #Lastly, just the useful information is retained, and the labels are formatted to distinguish one catchment from another
+    #I now want the tributary label, and the distance along the parent tributary, and the parent tributary label
+    TributaryDetails <- data.frame("Tributary Name" = paste0(CatchmentIndex,"-",seq(1:ncol(AllDistances))), "Confluence Stream" = paste0(CatchmentIndex,"-",AllDistances[4,]), "Confluence Location" = round(AllDistances[5,],0), check.names = FALSE, stringsAsFactors = FALSE)
+    
+    
+  })
+  
+  #All the catchment information is combined into a single data frame.
+  AllCatchments <- do.call(rbind,CatchmentTribLinkages)
+  rownames(AllCatchments) <- NULL
+  return(AllCatchments)
+}
+```
 
 Set directories and data file names
 ```{r}
@@ -58,8 +168,8 @@ RECReachNetwork <- readOGR(dsn =file.path(GISDataDirectory,REC_rivers),
                            layer = "river-environment-classification-manawatu-2010")
 #RECReachNetwork <- spTransform(RECReachNetwork,CRS("+init=epsg:2193") )
 
-RECWatersheds <- readOGR(dsn = file.path(GISDataDirectory,REC_Catchments),
-                         layer = "mfe-river-environment-classification-watershed-manawatu-2010")
+#RECWatersheds <- readOGR(dsn = file.path(GISDataDirectory,REC_Catchments),
+#                         layer = "mfe-river-environment-classification-watershed-manawatu-2010")
 #RECWatersheds <- spTransform(RECWatersheds,CRS("+init=epsg:2193") )
 
 #Load the Horizon total nitorigen load measurement sites, previously prepared by Caroline Fraser and called "HZLoads
@@ -83,6 +193,16 @@ CompleteNetwork <- CompleteNetwork[!duplicated(CompleteNetwork)]
 
 CompleteSpatialNetwork <- RECReachNetwork[RECReachNetwork$NZREACH %in% CompleteNetwork,]
 ```
+
+Then create a tributary table ready for CASM
+```{r}
+
+NetworkLabelList <- NetworkLabeler(CompleteSpatialNetwork)
+TributaryConnectionTable <- TributaryConnectionCreator(RECNetwork = CompleteSpatialNetwork, TributaryLabelList = NetworkLabelList)
+```
+
+
+The tributary connection table needs to be converted to an Excel Spreadsheet.
 
 
 I need to create an excel table of CASM-Nodes, CASM-Reach-Names, CASM-Reach-Locations, CASM-Reach-Areas, CASM-Reach-Exp.Coeff
