@@ -14,31 +14,31 @@ Function to crawl the REC network downstream
 ```{r}
 #' A function to find the REC network downstream of a reach
 #'
-#'This function generates a vector of the reach ID numbers (NZREACH attribute) downstream of a reach. It uses the REC V2.4 network. See \href{https://niwa.co.nz/freshwater-and-estuaries/management-tools/river-environment-classification-0}{NIWA REC V2} for details about REC V2.
+#'This function generates a vector of the reach ID numbers (nzsgmnt attribute) downstream of a reach. It uses the REC V2.4 network. See \href{https://niwa.co.nz/freshwater-and-estuaries/management-tools/river-environment-classification-0}{NIWA REC V2} for details about REC V2.
 #'
-#'@param RECNetwork An REC V2 network (either dataframe of spatial dataframe), with at least NZREACH, NZTNODE and NZFNODE attributes
-#'@param SourceReach The reach number (i.e. NZREACH attribute) of the reach for which the downstream network is required
+#'@param RECNetwork An REC V2 network (either dataframe of spatial dataframe), with at least nzsgmnt, TO_NODE and FROM_NO attributes
+#'@param SourceReach The reach number (i.e. nzsgmnt attribute) of the reach for which the downstream network is required
 #'@author Tim Kerr, \email{Tim.Kerr@@Rainfall.NZ}
-#'@return A vector of reach numbers (NZREACH attributes)
+#'@return A vector of reach numbers (nzsgmnt attributes)
 #'@keywords REC River Environment Classification
 #'@export
-DownstreamReachFinder <- function(RECNetwork=RECReachNetwork,SourceReach=7039931){ #The reach ID is for the Manawatu at Teachers College water quality reporting site
+DownstreamReachFinder <- function(RECNetwork=RECReachNetwork,SourceReach=7239110){ #The reach ID is for the Manawatu at Teachers College water quality reporting site
 
   #Initialise the vector of reach ID's downstream of the source
   DownstreamReaches <- SourceReach
   
   #Identify the row index of the source reach
-  SourceSiteReachIndex<-which(RECNetwork$NZREACH==SourceReach)
+  SourceSiteReachIndex<-which(RECNetwork$nzsgmnt==SourceReach)
   
   #Identify the reach immediately downstream of the source reach
-  downstream_index<-which(RECNetwork$NZFNODE==RECNetwork$NZTNODE[SourceSiteReachIndex])
+  downstream_index<-which(RECNetwork$FROM_NO==RECNetwork$TO_NODE[SourceSiteReachIndex])
   
-  #downstream_reach<-RECNetwork$nzsegment[downstream_index]
+  #downstream_reach<-RECNetwork$nzsgmnt[downstream_index]
   
   #Sequentially work downstream
   while (length(downstream_index)>0) {
-     DownstreamReaches <- c(DownstreamReaches,RECNetwork$NZREACH[downstream_index])
-     downstream_index<-which(RECNetwork$NZFNODE==RECNetwork$NZTNODE[downstream_index])
+     DownstreamReaches <- c(DownstreamReaches,RECNetwork$nzsgmnt[downstream_index])
+     downstream_index<-which(RECNetwork$FROM_NO==RECNetwork$TO_NODE[downstream_index])
      #downstream_index<-next_downstream_index
   } #end of while
   return(DownstreamReaches)
@@ -52,7 +52,7 @@ NetworkLabeler <- function(RECNetwork=MyREC){
 
   
   #Find the row indices of all the outlet reach's by finding which "to" nodes  don't have a corresponding "from" node
-  OutletReachIndices <- which(!RECNetwork$NZTNODE %in% RECNetwork$NZFNODE)
+  OutletReachIndices <- which(!RECNetwork$TO_NODE %in% RECNetwork$FROM_NO)
   names(OutletReachIndices) <- 1:length(OutletReachIndices)
   
   #Crawl each network in turn
@@ -60,26 +60,26 @@ NetworkLabeler <- function(RECNetwork=MyREC){
     #Initialise the label list
     RowNumber          <- 1
     CurrentLabel       <- 1
-    Labels             <- data.frame(NZREACH=NA,Label=NA)
-    Labels[RowNumber,] <- c(RECNetwork$NZREACH[OutletReachIndex],1)
+    Labels             <- data.frame(nzsgmnt=NA,Label=NA)
+    Labels[RowNumber,] <- c(RECNetwork$nzsgmnt[OutletReachIndex],1)
     
     CurrentReachIndex  <- OutletReachIndex
-    upstream_indices   <- which(RECNetwork$NZTNODE==RECNetwork$NZFNODE[CurrentReachIndex])
+    upstream_indices   <- which(RECNetwork$TO_NODE==RECNetwork$FROM_NO[CurrentReachIndex])
     LeftToDoIndices    <- upstream_indices
     
     while (length(LeftToDoIndices) > 0) {
       #Check if there are some upstream indices
-      BiggestBranchIndex <- which.max(RECNetwork$CATCHAREA[upstream_indices])
+      BiggestBranchIndex <- which.max(RECNetwork$CUM_ARE[upstream_indices])
       
       CurrentReachIndex  <- upstream_indices[BiggestBranchIndex]
       LeftToDoIndices    <- LeftToDoIndices[LeftToDoIndices != CurrentReachIndex]
       RowNumber          <- RowNumber + 1
       
-      Labels[RowNumber,] <- c(RECNetwork$NZREACH[CurrentReachIndex],CurrentLabel)
-      upstream_indices   <- which(RECNetwork$NZTNODE==RECNetwork$NZFNODE[CurrentReachIndex])
+      Labels[RowNumber,] <- c(RECNetwork$nzsgmnt[CurrentReachIndex],CurrentLabel)
+      upstream_indices   <- which(RECNetwork$TO_NODE==RECNetwork$FROM_NO[CurrentReachIndex])
       if (length(upstream_indices) == 0) {
         CurrentLabel = CurrentLabel + 1
-        upstream_indices <- LeftToDoIndices[which.max(RECNetwork$CATCHAREA[LeftToDoIndices])]
+        upstream_indices <- LeftToDoIndices[which.max(RECNetwork$CUM_ARE[LeftToDoIndices])]
       } else {
         LeftToDoIndices <- c(upstream_indices,LeftToDoIndices)
       }
@@ -110,31 +110,31 @@ TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, Trib
     #Find all the unique tributary labels
     UniqueTribs <- unique(CatchmentTribLabels$Label)
     
-    #for each tributary find the minimum DISTSEA attribute from the REC data, the REC reach immediately downstream of the tributary, and the tributary label of the REC reach that is immediately downstream. This builds a matrix of 4 numbers for each tributary, giving the minimum DISTSEA, the lowest NZREACH, the highest NZREACH below the tributary, and the label of the tributary below (i.e. the confluence name)
+    #for each tributary find the minimum LENGTHD attribute from the REC data, the REC reach immediately downstream of the tributary, and the tributary label of the REC reach that is immediately downstream. This builds a matrix of 4 numbers for each tributary, giving the minimum LENGTHD, the lowest nzsgmnt, the highest nzsgmnt below the tributary, and the label of the tributary below (i.e. the confluence name)
     ConfluenceTotalDistances <- sapply(UniqueTribs, function(TribLabel) {
       
       #Get the REC data for the current tributary
-      ReachData <- RECNetwork[RECNetwork$NZREACH %in% CatchmentTribLabels$NZREACH[CatchmentTribLabels$Label == TribLabel],]
+      ReachData <- RECNetwork[RECNetwork$nzsgmnt %in% CatchmentTribLabels$nzsgmnt[CatchmentTribLabels$Label == TribLabel],]
       
-      #Find the smallest DISTSEA attribute for the tributary
-      TribConnectionTotalDistance <- min(ReachData$DISTSEA)
+      #Find the smallest LENGTHD attribute for the tributary
+      TribConnectionTotalDistance <- min(ReachData$LENGTHD)
       
       #Find which reach is the lowest in the tributary
-      LowestReach <- ReachData$NZREACH[which.min(ReachData$DISTSEA)]
+      LowestReach <- ReachData$nzsgmnt[which.min(ReachData$LENGTHD)]
       
       #Find the reach immediately below the lowest reach
-      ReachBelow <- RECNetwork$NZREACH[which(RECNetwork$NZFNODE == RECNetwork$NZTNODE[RECNetwork$NZREACH == LowestReach])]
+      ReachBelow <- RECNetwork$nzsgmnt[which(RECNetwork$FROM_NO == RECNetwork$TO_NODE[RECNetwork$nzsgmnt == LowestReach])]
       
       #Special case if it is the lowest tributary, as it is effectively the mainstem
       if(length(ReachBelow)==0) {
         ReachBelow <- NA
         TribBelow <- 1 }
-      else {TribBelow <- CatchmentTribLabels$Label[CatchmentTribLabels$NZREACH == ReachBelow]}
+      else {TribBelow <- CatchmentTribLabels$Label[CatchmentTribLabels$nzsgmnt == ReachBelow]}
       
       return(c(TribConnectionTotalDistance,LowestReach,ReachBelow,TribBelow))
     })
     
-    #CASM needs the distance of a confluence above the previous confluence. So the DISTSEA of the bottom of the parent tributary needs to be subtracted from the DISTSEA of the current tributary. This is achieved by using the tributary values just created for each catchment.
+    #CASM needs the distance of a confluence above the previous confluence. So the LENGTHD of the bottom of the parent tributary needs to be subtracted from the LENGTHD of the current tributary. This is achieved by using the tributary values just created for each catchment.
     ConfluenceCorrectedDistances <- apply(ConfluenceTotalDistances, 2, function(x) {
       CorrectedDistance <- x[1] - ConfluenceTotalDistances[1,x[4]] 
     })
@@ -159,7 +159,8 @@ TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, Trib
 Set directories and data file names
 ```{r}
 #Set the project directory
-ProjectDirectory <- "C:\\Users\\Owner\\Documents\\Projects\\LWP\\Horizons"
+#ProjectDirectory <- "C:\\Users\\Owner\\Documents\\Projects\\LWP\\Horizons"   #Tim Kerr's home Windows Desktop
+ProjectDirectory <- "/home/tim/Desktop/Documents/Projects/LWP/Horizons"       #Tim Kerr's Ubuntu laptop
 #Set the data directory
 DataDirectory     <- file.path(ProjectDirectory, "Data")
 #Set the GIS directory
@@ -169,6 +170,7 @@ GISDataDirectory  <- file.path(DataDirectory,"GIS")
 
 REC_rivers <- "RECV2-Riverlines-Horizons"
 REC_Catchments <- "RECV2-Watersheds-Horizons"
+SubZones <-"Water_Management_Subzones"
 
 SubZones <- "Water_Management_Subzones"
 ```
@@ -176,6 +178,7 @@ SubZones <- "Water_Management_Subzones"
 
 load data
 ```{r}
+#REC data has been soured from the NIWA website. It has cut down versions of the attribute names, e.g. nzsegment is nzsgmnt. Keep an eye on this when comparing to other data sources that may have the full RECV2 attribute names.
 RECReachNetwork <- readOGR(dsn =file.path(GISDataDirectory,REC_rivers),
                            layer = "RECV2-Riverlines-Horizons")
 #RECReachNetwork <- spTransform(RECReachNetwork,CRS("+init=epsg:2193") )
@@ -187,36 +190,35 @@ RECReachNetwork <- readOGR(dsn =file.path(GISDataDirectory,REC_rivers),
 #Load the Horizon total nitorigen load measurement sites, previously prepared by Caroline Fraser and called "HZLoads
 load(file.path(DataDirectory,"N_ExpCoeff_Est_HZ_Feb20.rdata"))
 #Remove the duplicate sites
-MeasurementSites <- HZLoads[!duplicated(HZLoads$NZReach),]
+MeasurementSites <- HZLoads[!duplicated(HZLoads$nzsegment),] 
 
 #Create a spatial points object set to NZTM
 MeasurementSitesSpatial <-SpatialPointsDataFrame(coords = MeasurementSites[,c("NZTM.X","NZTM.Y")],
                                                data = MeasurementSites[,1:3],
                                                proj4string = CRS("+init=epsg:2193"))
 
-#Load the point sources of nitrogen, previously prepared by Caroline Fraser. Unfortunately they don't have NZREACH data.
+#Load the point sources of nitrogen, previously prepared by Caroline Fraser. Unfortunately they don't have nzsgmnt data.
 PointSourceSites <- read.csv(file.path(DataDirectory,"PointSourcesSummaryPC2_YE2012_04.csv"))
-#Add a NZREACH attribute and look them up from the REC V2 data.
-PointSourceSites$NZREACH <- RECReachNetwork$NZREACH[RECReachNetwork$REACH_ID%in%PointSourceSites$nzsegment]
+
 #Create a spatial points object set to NZTM
 PointSourceSitesSpatial <-SpatialPointsDataFrame(coords = PointSourceSites[,c("NZTM.X","NZTM.Y")],
                                                data = PointSourceSites[,1:5],
                                                proj4string = CRS("+init=epsg:2193"))
 
 #Load the subzone polygons
-SubZonePolyons <- readOGR(dsn =file.path(GISDataDirectory,REC_rivers),
-                           layer = "river-environment-classification-manawatu-2010")
+SubZonePolyons <- readOGR(dsn =file.path(GISDataDirectory,SubZones),
+                           layer = SubZones)
 ```
 
 
 From the load sites, point source sites, and water management subzones outlets, create the required network
 ```{r}
-AllPoints <- c(MeasurementSites$NZReach, PointSourceSites$)
-LoadNetwork <- lapply(MeasurementSites$NZReach, function(x) {DownstreamReachFinder(RECNetwork = RECReachNetwork, SourceReach = x)} )
+AllPoints <- c(MeasurementSites$nzsegment, PointSourceSites$nzsegment)
+LoadNetwork <- lapply(AllPoints, function(x) {DownstreamReachFinder(RECNetwork = RECReachNetwork, SourceReach = x)} )
 CompleteNetwork <- unlist(LoadNetwork)
 CompleteNetwork <- CompleteNetwork[!duplicated(CompleteNetwork)]
 
-CompleteSpatialNetwork <- RECReachNetwork[RECReachNetwork$NZREACH %in% CompleteNetwork,]
+CompleteSpatialNetwork <- RECReachNetwork[RECReachNetwork$nzsgmnt %in% CompleteNetwork,]
 ```
 
 Then create a tributary table ready for CASM
