@@ -181,7 +181,7 @@ load data
 #REC data has been soured from the NIWA website. It has cut down versions of the attribute names, e.g. nzsegment is nzsgmnt. Keep an eye on this when comparing to other data sources that may have the full RECV2 attribute names.
 RECReachNetwork <- readOGR(dsn =file.path(GISDataDirectory,REC_rivers),
                            layer = "RECV2-Riverlines-Horizons")
-#RECReachNetwork <- spTransform(RECReachNetwork,CRS("+init=epsg:2193") )
+RECReachNetwork <- spTransform(RECReachNetwork,CRS("+init=epsg:2193") )
 
 #RECWatersheds <- readOGR(dsn = file.path(GISDataDirectory,REC_Catchments),
 #                         layer = "RECV2-Watersheds-Horizons")
@@ -206,8 +206,9 @@ PointSourceSitesSpatial <-SpatialPointsDataFrame(coords = PointSourceSites[,c("N
                                                proj4string = CRS("+init=epsg:2193"))
 
 #Load the subzone polygons
-SubZonePolyons <- readOGR(dsn =file.path(GISDataDirectory,SubZones),
+SubZonePolygons <- readOGR(dsn =file.path(GISDataDirectory,SubZones),
                            layer = SubZones)
+SubZonePolygons <- spTransform(SubZonePolygons,CRS("+init=epsg:2193") )
 ```
 
 
