@@ -8,17 +8,19 @@ Load libraries
 if (!require(rgdal)) install.packages("rgdal"); library(rgdal)                #used for spatial processing
 if (!require(gdalUtils)) install.packages("gdalUtils"); library(gdalUtils)    #used for spatial processing
 if (!require(sp)) install.packages("sp"); library(sp)                         #used for spatial processing
+if (!require(GISTools)) install.packages('GISTools'); library(GISTools)
+if (!require(raster)) install.packages('raster'); library(raster)
+if (!require(readxl)) install.packages('readxl'); library(readxl)
+if (!require(openxlsx)) install.packages('openxlsx'); library(openxlsx)
+#if (!require(xlsx)) install.packages('xlsx'); library(xlsx)
 ```
 
 Function to crawl the REC network downstream
 ```{r}
 #' A function to find the REC network downstream of a reach
 #'
-<<<<<<< HEAD
 #'This function generates a vector of the reach ID numbers (nzsegment attribute) downstream of a reach. It uses the REC V2.4 network. See \href{https://niwa.co.nz/freshwater-and-estuaries/management-tools/river-environment-classification-0}{NIWA REC V2} for details about REC V2.
-=======
 #'This function generates a vector of the reach ID numbers (nzsgmnt attribute) downstream of a reach. It uses the REC V2.4 network. See \href{https://niwa.co.nz/freshwater-and-estuaries/management-tools/river-environment-classification-0}{NIWA REC V2} for details about REC V2.
->>>>>>> 6006b1e3ecd0326c9b5168b3214a7c9ea3552e4b
 #'
 #'@param RECNetwork An REC V2 network (either dataframe of spatial dataframe), with at least nzsgmnt, TO_NODE and FROM_NO attributes
 #'@param SourceReach The reach number (i.e. nzsgmnt attribute) of the reach for which the downstream network is required
@@ -54,7 +56,6 @@ Start from the bottom and work up to the first intersection. Decide which branch
 ```{r}
 NetworkLabeler <- function(RECNetwork=MyREC){
 
-  
   #Find the row indices of all the outlet reach's by finding which "to" nodes  don't have a corresponding "from" node
   OutletReachIndices <- which(!RECNetwork$TO_NODE %in% RECNetwork$FROM_NO)
   names(OutletReachIndices) <- 1:length(OutletReachIndices)
@@ -214,11 +215,27 @@ SubZonePolygons <- readOGR(dsn =file.path(GISDataDirectory,SubZones),
                            layer = SubZones)
 SubZonePolygons <- spTransform(SubZonePolygons,CRS("+init=epsg:2193") )
 ```
+Get the "nzsgmnt" attributes of the lowest reach in each of the management subzones
+```{r}
+SubZoneOfEachReach <- RECReachNetwork %over% SubZonePolygons #Note this takes about a minute to do
+RECReachNetwork$SubZoneCode <- SubZoneOfEachReach$Zone_Code
+
+#Work through each management zone to find the one with the least distance to the sea (the LENGTHD attribute)
+ManagementSubZoneOutletReaches <- lapply(seq_along(SubZonePolygons$Zone_Code), function(SingleSubZoneIndex){
+  #browser()
+  CurrentSubZone <- SubZonePolygons$Zone_Code[SingleSubZoneIndex]
+  CurrentSubZoneReaches <- RECReachNetwork[RECReachNetwork$SubZoneCode == CurrentSubZone,]
+  OutletReach <- CurrentSubZoneReaches$nzsgmnt[which.min(CurrentSubZoneReaches$LENGTHD)]
+  return(data.frame(SubZone = CurrentSubZone,nzsgmnt = OutletReach))
+})
+#Convert the list into a dataframe
+ManagementSubZoneOutletReachesDF <- do.call(rbind,ManagementSubZoneOutletReaches)
+```
 
 
 From the load sites, point source sites, and water management subzones outlets, create the required network
 ```{r}
-AllPoints <- c(MeasurementSites$nzsegment, PointSourceSites$nzsegment)
+AllPoints <- c(MeasurementSites$nzsegment, PointSourceSites$nzsegment, ManagementSubZoneOutletReachesDF$nzsgmnt)
 LoadNetwork <- lapply(AllPoints, function(x) {DownstreamReachFinder(RECNetwork = RECReachNetwork, SourceReach = x)} )
 CompleteNetwork <- unlist(LoadNetwork)
 CompleteNetwork <- CompleteNetwork[!duplicated(CompleteNetwork)]
@@ -233,13 +250,58 @@ NetworkLabelList <- NetworkLabeler(CompleteSpatialNetwork)
 TributaryConnectionTable <- TributaryConnectionCreator(RECNetwork = CompleteSpatialNetwork, TributaryLabelList = NetworkLabelList)
 ```
 
+Create a plot
+```{r}
+plot(SubZonePolygons, col = "transparent")
+plot(CompleteSpatialNetwork, col = "blue", add=TRUE)
+plot(PointSourceSitesSpatial, add=TRUE, col = "red")
+plot(MeasurementSitesSpatial, add=TRUE, col = "black")
+```
+Or another plot
+```{r}
+#Put all the spatial data in a list for simplicity
+SpatialData <- list(MeasurementSites=MeasurementSitesSpatial, PointSourceSites=PointSourceSitesSpatial,
+                    SubZones=SubZonePolygons,RiverNetwork=CompleteSpatialNetwork)
+#Get the extents of the area in lat lon
+MapExtentLatLon <- extent(projectExtent(SubZonePolygons, crs('+init=epsg:4326')))
+#Expand the extents to provide extents for the topographical map to download
+MapExtents <- MapExtentLatLon + 0.005
+LINZAPIToken <- "85df745fa5d446fea241dd5ae40add85"
+#And use those extents to get the Topo250 data. Note that I seem to need to download the data first, then load it into R.
+download.file(paste0("https://data.linz.govt.nz/services;key=",LINZAPIToken,"/wms?service=WMS&version=1.1.1&request=GetMap&layers=layer-50798&format=image/geotiff&width=1456&height=1600&bbox=",MapExtents@xmin,",",MapExtents@ymin,",",MapExtents@xmax,",",MapExtents@ymax),destfile <- file.path(GISDataDirectory,"TopoNZ.tif"))
+Topo250Map <- stack(file.path(GISDataDirectory,"TopoNZ.tif"))
+#Need to set NA values to 0
+values(Topo250Map)[is.na(values(Topo250Map))] <- 0
+
+#Reproject the other spatial data to the maps projection ready for plotting
+reprojected.data <- lapply(SpatialData, spTransform,Topo250Map@crs)
+list2env(reprojected.data,env=.GlobalEnv)
+
+{
+plotRGB(Topo250Map,colNA="white")
+plot(SubZones, add=TRUE)
+points(MeasurementSites,pch=20)
+points(PointSourceSites, pch = 8, col = "dark green")
+lines(RiverNetwork, col = "blue")
+legend("topleft",bty="n",legend=c("SubZones","Measurement \nSites","Point Source Sites","River \nNetwork"),pch=c(0,20,8,NA),pt.cex=c(1.3,1,1,NA),merge=TRUE,lty=c(-1,-1,-1,1),col=c("black","black","dark green","blue"))
+north.arrow(xb=par("usr")[1] + 0.0015,yb=par("usr")[3]+0.0009, len = 0.0002)
+map.scale(xc=par("usr")[1] + 0.0015,yc=-42.89077,len=1/(1110.91/2.5), units= "metres", ndivs=1, subdiv = 250)
+}
+
+#Generate a plot file
+dev.copy(png,file=file.path(DataDirectory,
+                            "OverviewMap.png")
+         ,width=19,height=28,units="cm",res=600,family="Arial",pointsize=8)
+invisible(dev.off())
+```
+
 
 The tributary connection table needs to be converted to an Excel Spreadsheet.
 
 
 I need to create an excel table of CASM-Nodes, CASM-Reach-Names, CASM-Reach-Locations, CASM-Reach-Areas, CASM-Reach-Exp.Coeff
 ```{r}
-
+xlsx::write.xlsx(TributaryConnectionTable,file.path(DataDirectory,"CASM-Inputs.xlsx"),col.names = TRUE, sheetName="River Network")
 ```
 
 I need to create an excel table of CASM-Nodes, CASM-Reach-Names, CASM-Reach-Locations, CASM-Reach-Areas, CASM-Reach-Exp.Coeff
