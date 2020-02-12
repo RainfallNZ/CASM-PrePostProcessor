@@ -11,8 +11,8 @@ if (!require(sp)) install.packages("sp"); library(sp)                         #u
 if (!require(GISTools)) install.packages('GISTools'); library(GISTools)
 if (!require(raster)) install.packages('raster'); library(raster)
 #if (!require(readxl)) install.packages('readxl'); library(readxl)
-#if (!require(openxlsx)) install.packages('openxlsx'); library(openxlsx)
-if (!require(xlsx)) install.packages('xlsx'); library(xlsx)
+if (!require(openxlsx)) install.packages('openxlsx'); library(openxlsx)
+#if (!require(xlsx)) install.packages('xlsx'); library(xlsx)
 
 if (!require(leaflet)) install.packages('leaflet'); library(leaflet) #Package with mapping functions
 if (!require(viridis)) install.packages('viridis'); library(viridis)   #Provides color palettes that are good for mapping rain and account for colour blindness
@@ -179,8 +179,8 @@ TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, Trib
 Set directories and data file names
 ```{r}
 #Set the project directory
-#ProjectDirectory <- "C:\\Users\\Owner\\Documents\\Projects\\LWP\\Horizons"   #Tim Kerr's home Windows Desktop
-ProjectDirectory <- "/home/tim/Desktop/Documents/Projects/LWP/Horizons"       #Tim Kerr's Ubuntu laptop
+ProjectDirectory <- "C:\\Users\\Owner\\Documents\\Projects\\LWP\\Horizons"   #Tim Kerr's home Windows Desktop
+#ProjectDirectory <- "/home/tim/Desktop/Documents/Projects/LWP/Horizons"       #Tim Kerr's Ubuntu laptop
 #Set the data directory
 DataDirectory     <- file.path(ProjectDirectory, "Data")
 #Set the GIS directory
@@ -336,32 +336,21 @@ map
 saveRDS(reprojected.data.WGS84,file.path(ProjectDirectory,"R/CASM-PrePostProcessor/ShinyApp/Data","SpatialData.RDS"))
 ```
 
-Put the map on the web so people can look at it
-```{r}
-r_colors <- rgb(t(col2rgb(colors()) / 255))
-names(r_colors) <- colors()
-
-ui <- fluidPage(
-  leafletOutput("mymap", height = "100vh"),
-
-)
-
-server <- function(input, output, session) {
-
-  output$mymap <- renderLeaflet({map})
-
-}
-
-shinyApp(ui, server)
-```
-
 
 The tributary connection table needs to be converted to an Excel Spreadsheet.
 
 
 I need to create an excel table of CASM-Nodes, CASM-Reach-Names, CASM-Reach-Locations, CASM-Reach-Areas, CASM-Reach-Exp.Coeff
 ```{r}
-xlsx::write.xlsx(TributaryConnectionTable,file.path(DataDirectory,"CASM-Inputs.xlsx"),col.names = TRUE, sheetName="River Network", row.names = FALSE)
+#xlsx::write.xlsx(TributaryConnectionTable,file.path(DataDirectory,"CASM-Inputs.xlsx"),col.names = TRUE, sheetName="River Network", row.names = FALSE)
+
+Out <- createWorkbook()
+
+addWorksheet(Out, "River Network")
+
+writeData(Out, sheet = "River Network", x = TributaryConnectionTable)
+
+saveWorkbook(Out, file.path(DataDirectory,"CASM-Inputs.xlsx"), overwrite = T)
 ```
 
 Export the spatial data so that I can figure out 
