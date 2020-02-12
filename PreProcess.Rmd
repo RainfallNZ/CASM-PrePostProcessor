@@ -10,13 +10,20 @@ if (!require(gdalUtils)) install.packages("gdalUtils"); library(gdalUtils)    #u
 if (!require(sp)) install.packages("sp"); library(sp)                         #used for spatial processing
 if (!require(GISTools)) install.packages('GISTools'); library(GISTools)
 if (!require(raster)) install.packages('raster'); library(raster)
-if (!require(readxl)) install.packages('readxl'); library(readxl)
-if (!require(openxlsx)) install.packages('openxlsx'); library(openxlsx)
-#if (!require(xlsx)) install.packages('xlsx'); library(xlsx)
+#if (!require(readxl)) install.packages('readxl'); library(readxl)
+#if (!require(openxlsx)) install.packages('openxlsx'); library(openxlsx)
+if (!require(xlsx)) install.packages('xlsx'); library(xlsx)
+
+if (!require(leaflet)) install.packages('leaflet'); library(leaflet) #Package with mapping functions
+if (!require(viridis)) install.packages('viridis'); library(viridis)   #Provides color palettes that are good for mapping rain and account for colour blindness
+if (!require(shiny)) install.packages('shiny'); library(shiny)
+if (!require(mapview)) install.packages('mapview'); library(mapview)
+if (!require(htmltools)) install.packages('htmltools'); library(htmltools)
 ```
 
 Function to crawl the REC network downstream
 ```{r}
+
 #' A function to find the REC network downstream of a reach
 #'
 #'This function generates a vector of the reach ID numbers (nzsegment attribute) downstream of a reach. It uses the REC V2.4 network. See \href{https://niwa.co.nz/freshwater-and-estuaries/management-tools/river-environment-classification-0}{NIWA REC V2} for details about REC V2.
@@ -60,8 +67,11 @@ NetworkLabeler <- function(RECNetwork=MyREC){
   OutletReachIndices <- which(!RECNetwork$TO_NODE %in% RECNetwork$FROM_NO)
   names(OutletReachIndices) <- 1:length(OutletReachIndices)
   
+  #Save the outlet reaches to an external file so that we can figure out their names manually
+  write.table(RECNetwork@data$nzsgmnt[OutletReachIndices],file.path(DataDirectory,"OutletReaches.csv"),sep=",",row.names = FALSE)
+  
   #Crawl each network in turn
-  ReachLabels <- lapply(OutletReachIndices, function(OutletReachIndex) {   #OutletReachIndex <- 39
+  ReachLabels <- lapply(OutletReachIndices, function(OutletReachIndex) {   
     #Initialise the label list
     RowNumber          <- 1
     CurrentLabel       <- 1
@@ -74,7 +84,7 @@ NetworkLabeler <- function(RECNetwork=MyREC){
     
     while (length(LeftToDoIndices) > 0) {
       #Check if there are some upstream indices
-      BiggestBranchIndex <- which.max(RECNetwork$CUM_ARE[upstream_indices])
+      BiggestBranchIndex <- which.max(RECNetwork$hdw_dst[upstream_indices])
       
       CurrentReachIndex  <- upstream_indices[BiggestBranchIndex]
       LeftToDoIndices    <- LeftToDoIndices[LeftToDoIndices != CurrentReachIndex]
@@ -84,7 +94,7 @@ NetworkLabeler <- function(RECNetwork=MyREC){
       upstream_indices   <- which(RECNetwork$TO_NODE==RECNetwork$FROM_NO[CurrentReachIndex])
       if (length(upstream_indices) == 0) {
         CurrentLabel = CurrentLabel + 1
-        upstream_indices <- LeftToDoIndices[which.max(RECNetwork$CUM_ARE[LeftToDoIndices])]
+        upstream_indices <- LeftToDoIndices[which.max(RECNetwork$hdw_dst[LeftToDoIndices])]
       } else {
         LeftToDoIndices <- c(upstream_indices,LeftToDoIndices)
       }
@@ -105,12 +115,16 @@ Confluence Location is the distance along the confluence from its start, that th
 This can handle multiple wholly independent catchments (i.e. that are not connected).
 ```{r}
 TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, TributaryLabelList = TribLabelList){
-  
+ 
   #For each independent catchment, find the distance along the reach to the confluence
   CatchmentTribLinkages <- lapply(seq_along(TributaryLabelList), function(CatchmentIndex) { 
-    
+
     #Get the tributary labels for all REC reaches within the current independent catchment 
     CatchmentTribLabels <- TributaryLabelList[[CatchmentIndex]]
+    
+    #Lookup the catchment name based on the OutletReachNames look up table. Assume that only one reach in the OutletReachName look up table will match the reach numbers in the tributary.
+    CatchmentName <- OutletReachNames$Name[OutletReachNames$nzsegment %in% CatchmentTribLabels$nzsgmnt]
+    print(CatchmentName)
     
     #Find all the unique tributary labels
     UniqueTribs <- unique(CatchmentTribLabels$Label)
@@ -121,11 +135,12 @@ TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, Trib
       #Get the REC data for the current tributary
       ReachData <- RECNetwork[RECNetwork$nzsgmnt %in% CatchmentTribLabels$nzsgmnt[CatchmentTribLabels$Label == TribLabel],]
       
-      #Find the smallest LENGTHD attribute for the tributary
+      #Find the smallest LENGTHD attribute for the tributary. Note the special case of reach 7260002 (Kaikokopu Stream) which doesn't have a LENGTHD attribute. Ideally we could simply ignore it, but it is a one-reach tributary (it is the outlet of a sub zone without point source or measurment sites within it) so it has to be used
       TribConnectionTotalDistance <- min(ReachData$LENGTHD)
+      if (is.na(TribConnectionTotalDistance)) TribConnectionTotalDistance <- 0
       
-      #Find which reach is the lowest in the tributary
-      LowestReach <- ReachData$nzsgmnt[which.min(ReachData$LENGTHD)]
+      #Find which reach is the lowest in the tributary, based on the hdw_dst attribute
+      LowestReach <- ReachData$nzsgmnt[which.max(ReachData$hdw_dst)] 
       
       #Find the reach immediately below the lowest reach
       ReachBelow <- RECNetwork$nzsgmnt[which(RECNetwork$FROM_NO == RECNetwork$TO_NODE[RECNetwork$nzsgmnt == LowestReach])]
@@ -149,7 +164,7 @@ TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, Trib
     
     #Lastly, just the useful information is retained, and the labels are formatted to distinguish one catchment from another
     #I now want the tributary label, and the distance along the parent tributary, and the parent tributary label
-    TributaryDetails <- data.frame("Tributary Name" = paste0(CatchmentIndex,"-",seq(1:ncol(AllDistances))), "Confluence Stream" = paste0(CatchmentIndex,"-",AllDistances[4,]), "Confluence Location" = round(AllDistances[5,],0), check.names = FALSE, stringsAsFactors = FALSE)
+    TributaryDetails <- data.frame("Tributary Name" = paste0(CatchmentName,"-",seq(1:ncol(AllDistances))), "Confluence Stream" = paste0(CatchmentName,"-",AllDistances[4,]), "Confluence Location" = round(AllDistances[5,],0), check.names = FALSE, stringsAsFactors = FALSE)
     
     
   })
@@ -178,6 +193,8 @@ REC_Catchments <- "RECV2-Watersheds-Horizons"
 SubZones <-"Water_Management_Subzones"
 
 SubZones <- "Water_Management_Subzones"
+
+OutletReachNamesFile <- "OutletReachNames.csv" 
 ```
 
 
@@ -202,7 +219,7 @@ MeasurementSitesSpatial <-SpatialPointsDataFrame(coords = MeasurementSites[,c("N
                                                data = MeasurementSites[,1:3],
                                                proj4string = CRS("+init=epsg:2193"))
 
-#Load the point sources of nitrogen, previously prepared by Caroline Fraser. Unfortunately they don't have nzsgmnt data.
+#Load the point sources of nitrogen, previously prepared by Caroline Fraser. Unfortunately they don't have nzsgmnt data. notethat an erro was found for the NZTM.X position of the Fonterra at Pahiatua site. Originally it was 1859554.9 but it should be 1839554.9. This has been corrected on the LWP sharepoint version of the 20200201_HorizonsRiverCriteria.xlsx file, and the Tim Kerr version of the PointSourcesSummaryPC2_YE2012_04.csv file.
 PointSourceSites <- read.csv(file.path(DataDirectory,"PointSourcesSummaryPC2_YE2012_04.csv"))
 
 #Create a spatial points object set to NZTM
@@ -214,18 +231,22 @@ PointSourceSitesSpatial <-SpatialPointsDataFrame(coords = PointSourceSites[,c("N
 SubZonePolygons <- readOGR(dsn =file.path(GISDataDirectory,SubZones),
                            layer = SubZones)
 SubZonePolygons <- spTransform(SubZonePolygons,CRS("+init=epsg:2193") )
+
+#Load the network outlet reach names lookup table. This has been manually prepared, and may need editing if the network changes to include outlet reaches not yet included in this file
+OutletReachNames <- read.csv(file.path(DataDirectory,OutletReachNamesFile), stringsAsFactors = FALSE)
 ```
+
 Get the "nzsgmnt" attributes of the lowest reach in each of the management subzones
 ```{r}
 SubZoneOfEachReach <- RECReachNetwork %over% SubZonePolygons #Note this takes about a minute to do
 RECReachNetwork$SubZoneCode <- SubZoneOfEachReach$Zone_Code
 
-#Work through each management zone to find the one with the least distance to the sea (the LENGTHD attribute)
+#Work through each management zone to find the reach with the greatest distance to the headwater (the hdw_dst attribute). . I tried doing this based on the least largest area (the CUM_ARE attribute) but there were some zero values, I also tried distance to the sea (the LENGTHD attribute, but near the coast I was getting small reaches that were not the main river channel, but were closer to the sea)
 ManagementSubZoneOutletReaches <- lapply(seq_along(SubZonePolygons$Zone_Code), function(SingleSubZoneIndex){
   #browser()
   CurrentSubZone <- SubZonePolygons$Zone_Code[SingleSubZoneIndex]
   CurrentSubZoneReaches <- RECReachNetwork[RECReachNetwork$SubZoneCode == CurrentSubZone,]
-  OutletReach <- CurrentSubZoneReaches$nzsgmnt[which.min(CurrentSubZoneReaches$LENGTHD)]
+  OutletReach <- CurrentSubZoneReaches$nzsgmnt[which.max(CurrentSubZoneReaches$hdw_dst)]
   return(data.frame(SubZone = CurrentSubZone,nzsgmnt = OutletReach))
 })
 #Convert the list into a dataframe
@@ -294,6 +315,45 @@ dev.copy(png,file=file.path(DataDirectory,
          ,width=19,height=28,units="cm",res=600,family="Arial",pointsize=8)
 invisible(dev.off())
 ```
+Or another plot
+```{r}
+#Reproject the other spatial data to the maps projection ready for plotting
+SpatialData <- list(MeasurementSites=MeasurementSitesSpatial, PointSourceSites=PointSourceSitesSpatial,
+                    SubZones=SubZonePolygons,RiverNetwork=CompleteSpatialNetwork)
+reprojected.data.WGS84 <- lapply(SpatialData, spTransform,CRS("+init=epsg:4326"))
+
+
+map <- leaflet::leaflet() %>% 
+  leaflet::addProviderTiles(providers$OpenStreetMap) %>%
+  setView(lng=175.5,lat=-40.0,zoom=8) %>% 
+  addPolygons(data = reprojected.data.WGS84$SubZones, color = "black", weight = 3, fillColor = "transparent", label = ~htmlEscape(Zone_Code)) %>%
+  addCircleMarkers(data = reprojected.data.WGS84$MeasurementSites, color = "red",label = ~htmlEscape(sID)) %>%
+  addCircleMarkers(data = reprojected.data.WGS84$PointSourceSites, color = "black", label = ~htmlEscape(Site.Name)) %>%
+  addPolylines(data = reprojected.data.WGS84$RiverNetwork, color= "blue", label = ~htmlEscape(nzsgmnt))
+map
+
+#save the map as an R file so that it can be used in an RShinyApp
+saveRDS(map,file.path(ProjectDirectory,"R/CASM-PrePostProcessor/ShinyApp/Data","CASM-Network.RDS"))
+```
+
+Put the map on the web so people can look at it
+```{r}
+r_colors <- rgb(t(col2rgb(colors()) / 255))
+names(r_colors) <- colors()
+
+ui <- fluidPage(
+  leafletOutput("mymap", height = "100vh"),
+
+)
+
+server <- function(input, output, session) {
+
+  output$mymap <- renderLeaflet({map})
+
+}
+
+shinyApp(ui, server)
+```
 
 
 The tributary connection table needs to be converted to an Excel Spreadsheet.
@@ -301,10 +361,10 @@ The tributary connection table needs to be converted to an Excel Spreadsheet.
 
 I need to create an excel table of CASM-Nodes, CASM-Reach-Names, CASM-Reach-Locations, CASM-Reach-Areas, CASM-Reach-Exp.Coeff
 ```{r}
-xlsx::write.xlsx(TributaryConnectionTable,file.path(DataDirectory,"CASM-Inputs.xlsx"),col.names = TRUE, sheetName="River Network")
+xlsx::write.xlsx(TributaryConnectionTable,file.path(DataDirectory,"CASM-Inputs.xlsx"),col.names = TRUE, sheetName="River Network", row.names = FALSE)
 ```
 
-I need to create an excel table of CASM-Nodes, CASM-Reach-Names, CASM-Reach-Locations, CASM-Reach-Areas, CASM-Reach-Exp.Coeff
+Export the spatial data so that I can figure out 
 ```{r}
 
 ```
