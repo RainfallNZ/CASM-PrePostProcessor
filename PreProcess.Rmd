@@ -332,8 +332,8 @@ map <- leaflet::leaflet() %>%
   addPolylines(data = reprojected.data.WGS84$RiverNetwork, color= "blue", label = ~htmlEscape(nzsgmnt))
 map
 
-#save the map as an R file so that it can be used in an RShinyApp
-saveRDS(map,file.path(ProjectDirectory,"R/CASM-PrePostProcessor/ShinyApp/Data","CASM-Network.RDS"))
+#save the mapdata as an R file so that it can be used in an RShinyApp
+saveRDS(reprojected.data.WGS84,file.path(ProjectDirectory,"R/CASM-PrePostProcessor/ShinyApp/Data","SpatialData.RDS"))
 ```
 
 Put the map on the web so people can look at it
