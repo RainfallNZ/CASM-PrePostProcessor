@@ -27,8 +27,6 @@ Function to crawl the REC network downstream
 #' A function to find the REC network downstream of a reach
 #'
 #'This function generates a vector of the reach ID numbers (nzsegment attribute) downstream of a reach. It uses the REC V2.4 network. See \href{https://niwa.co.nz/freshwater-and-estuaries/management-tools/river-environment-classification-0}{NIWA REC V2} for details about REC V2.
-#'This function generates a vector of the reach ID numbers (nzsgmnt attribute) downstream of a reach. It uses the REC V2.4 network. See \href{https://niwa.co.nz/freshwater-and-estuaries/management-tools/river-environment-classification-0}{NIWA REC V2} for details about REC V2.
-#'
 #'@param RECNetwork An REC V2 network (either dataframe of spatial dataframe), with at least nzsgmnt, TO_NODE and FROM_NO attributes
 #'@param SourceReach The reach number (i.e. nzsgmnt attribute) of the reach for which the downstream network is required
 #'@author Tim Kerr, \email{Tim.Kerr@@Rainfall.NZ}
@@ -164,7 +162,7 @@ TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, Trib
     
     #Lastly, just the useful information is retained, and the labels are formatted to distinguish one catchment from another
     #I now want the tributary label, and the distance along the parent tributary, and the parent tributary label
-    TributaryDetails <- data.frame("Tributary Name" = paste0(CatchmentName,"-",seq(1:ncol(AllDistances))), "Confluence Stream" = paste0(CatchmentName,"-",AllDistances[4,]), "Confluence Location" = round(AllDistances[5,],0), check.names = FALSE, stringsAsFactors = FALSE)
+    TributaryDetails <- data.frame("nzsgmnt"=AllDistances[2,],"Tributary Name" = paste0(CatchmentName,"-",seq(1:ncol(AllDistances))), "Confluence Stream" = paste0(CatchmentName,"-",AllDistances[4,]), "Confluence Location" = round(AllDistances[5,],0), check.names = FALSE, stringsAsFactors = FALSE)
     
     
   })
@@ -176,11 +174,66 @@ TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, Trib
 }
 ```
 
+
+```{r}
+#' A function to create a CASM node location table given an REC network with additional attributes of CASM tributary labels and CASM tributary distances
+#'
+#'This function generates a data frame of CASM Node names, CASM tributary, CASM tributary location 
+#'
+#'@param CASMRECNetwork An REC V2 network (either dataframe of spatial dataframe), with at least nzsgmnt, CASMTrib and CASMTrib_Loc attributes
+#'@param CASMNodes A dataframe of node names and REC V2 reach number (i.e. nzsgmnt attribute) of the nodes for which the CASM table is to be prepared
+#'@author Tim Kerr, \email{Tim.Kerr@@Rainfall.NZ}
+#'@return A dataframe of CASM Node names, CASM tributary, CASM tributary location 
+#'@keywords REC River Environment Classification CASM
+#'@export
+CASMNodeTablePreparer <- function(CASMRECNetwork=RECReachNetwork, NetworkLabelList = NetworkLabelList, TributaryConnectionTable = TributaryConnectionTable, CASMNodes=data.frame(NodeName = c("test","Manawatu at Teachers College"),nzsgmnt= c(7140020,7239110))){
+
+  #Work through each catchment
+  AllTribLocations <- lapply(NetworkLabelList, function(SingleCatchmentNeworkLabels) {
+  
+    #Get the catchment name
+    CatchmentName <- OutletReachNames$Name[OutletReachNames$nzsegment %in% SingleCatchmentNeworkLabels$nzsgmnt]
+    print(CatchmentName)
+    
+    #Find which CASMNodes are within the current catchment
+    CatchmentNodes <- CASMNodes[(CASMNodes$nzsgmnt %in% SingleCatchmentNeworkLabels$nzsgmnt),]
+    
+    #Work through all the Nodes that are in this catchment
+    if (nrow(CatchmentNodes) > 0) {
+    #Now work through the nodes that are within the catchment, find the outlet reach, and then get the distance.
+    TribLocations <- sapply(seq_along(CatchmentNodes$NodeName), function(NodeIndex){
+      #browser()
+      CASMNode <- CatchmentNodes[NodeIndex,]
+      NodeNumber  <- SingleCatchmentNeworkLabels$Label[SingleCatchmentNeworkLabels$nzsgmnt == CASMNode$nzsgmnt]
+      NodeTribName <- paste0(CatchmentName,"-",NodeNumber)
+      
+      #Look up the trib ID (prepended with the catchment name) of the reach of the current node and find the reach number (nzsgmnt attribute) of its confluence
+      TribOutletReach <- TributaryConnectionTable$nzsgmnt[which(TributaryConnectionTable$`Tributary Name` == NodeTribName)]
+      
+      #Subtract the LENGTHD of the current reach from the LENGTHD of its tributary outlet reach
+      LocationOnTrib <- CASMRECNetwork$LENGTHD[CASMRECNetwork$nzsgmnt == CASMNode$nzsgmnt] - CASMRECNetwork$LENGTHD[CASMRECNetwork$nzsgmnt == TribOutletReach]
+      Result <- c(nzsgmnt=CASMNode$nzsgmnt,CASMNodeName=as.character(CASMNode$NodeName),TribName = NodeTribName,TribLocn = round(LocationOnTrib,0))
+      return(Result)   
+       })
+  } else {NULL}
+    
+
+  })
+
+
+  browser()
+ #Turn the catchment-based list into a data frame
+  CASMNodeTable <- data.frame(t(do.call(cbind,AllTribLocations)))
+  return(CASMNodeTable)
+}
+
+```
+
 Set directories and data file names
 ```{r}
 #Set the project directory
-ProjectDirectory <- "C:\\Users\\Owner\\Documents\\Projects\\LWP\\Horizons"   #Tim Kerr's home Windows Desktop
-#ProjectDirectory <- "/home/tim/Desktop/Documents/Projects/LWP/Horizons"       #Tim Kerr's Ubuntu laptop
+#ProjectDirectory <- "C:\\Users\\Owner\\Documents\\Projects\\LWP\\Horizons"   #Tim Kerr's home Windows Desktop
+ProjectDirectory <- "/home/tim/Desktop/Documents/Projects/LWP/Horizons"       #Tim Kerr's Ubuntu laptop
 #Set the data directory
 DataDirectory     <- file.path(ProjectDirectory, "Data")
 #Set the GIS directory
@@ -269,7 +322,28 @@ Then create a tributary table ready for CASM
 
 NetworkLabelList <- NetworkLabeler(CompleteSpatialNetwork)
 TributaryConnectionTable <- TributaryConnectionCreator(RECNetwork = CompleteSpatialNetwork, TributaryLabelList = NetworkLabelList)
+
+
 ```
+Then create a point source table ready for CASM, and a measurementsite table ready for CASM
+```{r}
+#Create a dataframe of just the nzsegment number and the site name
+PointSourceNodes <- PointSourceSites[,c("Site.Name","nzsegment")]
+
+#Standardise the column names so that it matches the expected format in the CASMNodeTablePreparer() function
+names(PointSourceNodes) <- c("NodeName","nzsgmnt")
+
+#Prepare the CASM table with the bonus nzsgmnt column
+PointSourceTable <- CASMNodeTablePreparer(CASMRECNetwork = CompleteSpatialNetwork, NetworkLabelList = NetworkLabelList, TributaryConnectionTable = TributaryConnectionTable,CASMNodes = PointSourceNodes )
+
+#Need to add the point source load to the table
+
+#Repeat for the measurement sites
+MeasurementSiteNodes <- MeasurementSites[,c("sID","nzsegment")]
+names(MeasurementSiteNodes) <- c("NodeName","nzsgmnt")
+MeasurementSiteTable <- CASMNodeTablePreparer(CASMRECNetwork = CompleteSpatialNetwork, NetworkLabelList = NetworkLabelList, TributaryConnectionTable = TributaryConnectionTable,CASMNodes= MeasurementSiteNodes)
+```
+
 
 Create a plot
 ```{r}
@@ -348,7 +422,7 @@ Out <- createWorkbook()
 
 addWorksheet(Out, "River Network")
 
-writeData(Out, sheet = "River Network", x = TributaryConnectionTable)
+writeData(Out, sheet = "River Network", x = TributaryConnectionTable[c("Tributary Name","Confluence Stream","Confluence Location")])
 
 saveWorkbook(Out, file.path(DataDirectory,"CASM-Inputs.xlsx"), overwrite = T)
 ```
