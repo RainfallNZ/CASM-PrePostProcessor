@@ -9,6 +9,8 @@ if (!require(rgdal)) install.packages("rgdal"); library(rgdal)                #u
 if (!require(gdalUtils)) install.packages("gdalUtils"); library(gdalUtils)    #used for spatial processing
 if (!require(sp)) install.packages("sp"); library(sp)                         #used for spatial processing
 if (!require(GISTools)) install.packages('GISTools'); library(GISTools)
+if (!require(dplyr)) install.packages('dplyr'); library(dplyr)
+if (!require(sf)) install.packages('sf'); library(sf)
 if (!require(raster)) install.packages('raster'); library(raster)
 #if (!require(readxl)) install.packages('readxl'); library(readxl)
 if (!require(openxlsx)) install.packages('openxlsx'); library(openxlsx)
@@ -162,7 +164,7 @@ TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, Trib
     
     #Lastly, just the useful information is retained, and the labels are formatted to distinguish one catchment from another
     #I now want the tributary label, and the distance along the parent tributary, and the parent tributary label
-    TributaryDetails <- data.frame("nzsgmnt"=AllDistances[2,],"Tributary Name" = paste0(CatchmentName,"-",seq(1:ncol(AllDistances))), "Confluence Stream" = paste0(CatchmentName,"-",AllDistances[4,]), "Confluence Location" = round(AllDistances[5,],0), check.names = FALSE, stringsAsFactors = FALSE)
+    TributaryDetails <- data.frame("nzsgmnt"=AllDistances[2,],"Tributary Name" = paste0(CatchmentName,"-",seq(1:ncol(AllDistances))), "Confluence Stream" = paste0(CatchmentName,"-",AllDistances[4,]), "Confluence Location (km)" = round(AllDistances[5,]/1000,0), check.names = FALSE, stringsAsFactors = FALSE)
     
     
   })
@@ -202,7 +204,7 @@ CASMNodeTablePreparer <- function(CASMRECNetwork=RECReachNetwork, NetworkLabelLi
     if (nrow(CatchmentNodes) > 0) {
     #Now work through the nodes that are within the catchment, find the outlet reach, and then get the distance.
     TribLocations <- sapply(seq_along(CatchmentNodes$NodeName), function(NodeIndex){
-      #browser()
+
       CASMNode <- CatchmentNodes[NodeIndex,]
       NodeNumber  <- SingleCatchmentNeworkLabels$Label[SingleCatchmentNeworkLabels$nzsgmnt == CASMNode$nzsgmnt]
       NodeTribName <- paste0(CatchmentName,"-",NodeNumber)
@@ -212,7 +214,7 @@ CASMNodeTablePreparer <- function(CASMRECNetwork=RECReachNetwork, NetworkLabelLi
       
       #Subtract the LENGTHD of the current reach from the LENGTHD of its tributary outlet reach
       LocationOnTrib <- CASMRECNetwork$LENGTHD[CASMRECNetwork$nzsgmnt == CASMNode$nzsgmnt] - CASMRECNetwork$LENGTHD[CASMRECNetwork$nzsgmnt == TribOutletReach]
-      Result <- c(nzsgmnt=CASMNode$nzsgmnt,CASMNodeName=as.character(CASMNode$NodeName),TribName = NodeTribName,TribLocn = round(LocationOnTrib,0))
+      Result <- c(nzsgmnt=CASMNode$nzsgmnt,CASMNodeName=as.character(CASMNode$NodeName),TribName = NodeTribName,TribLocn = round(LocationOnTrib/1000,0))
       return(Result)   
        })
   } else {NULL}
@@ -220,14 +222,14 @@ CASMNodeTablePreparer <- function(CASMRECNetwork=RECReachNetwork, NetworkLabelLi
 
   })
 
-
-  browser()
  #Turn the catchment-based list into a data frame
   CASMNodeTable <- data.frame(t(do.call(cbind,AllTribLocations)))
   return(CASMNodeTable)
 }
 
 ```
+
+
 
 Set directories and data file names
 ```{r}
@@ -248,6 +250,8 @@ SubZones <-"Water_Management_Subzones"
 SubZones <- "Water_Management_Subzones"
 
 OutletReachNamesFile <- "OutletReachNames.csv" 
+
+ZoneLanduseLUCShapefileName <- "Landuse_LUC Original"
 ```
 
 
@@ -287,7 +291,39 @@ SubZonePolygons <- spTransform(SubZonePolygons,CRS("+init=epsg:2193") )
 
 #Load the network outlet reach names lookup table. This has been manually prepared, and may need editing if the network changes to include outlet reaches not yet included in this file
 OutletReachNames <- read.csv(file.path(DataDirectory,OutletReachNamesFile), stringsAsFactors = FALSE)
+
+#Load the spatial data with the landuse, land use capability and submanagement zones alltogether
+SubZoneLanduseLUCSpatial <- readOGR(dsn =file.path(GISDataDirectory,ZoneLanduseLUCShapefileName),
+                           layer = ZoneLanduseLUCShapefileName)
+SubZoneLanduseLUCSpatial <- spTransform(SubZoneLanduseLUCSpatial,CRS("+init=epsg:2193") )
 ```
+I need to analyse each management sub zone to determine how much area each landuse-LUC combination takes up
+```{r}
+#Create a new class that combines the submanagement zone (ZONE_CODE), the reclassified landsue (RegSciLand) and the primary Land Use Capability class (LUC_CLASS)
+SubZoneLanduseLUCSpatial@data$ZoneLanduseLUC <- paste0(SubZoneLanduseLUCSpatial$Zone_Code,"-",SubZoneLanduseLUCSpatial$RegiScLand,"-",SubZoneLanduseLUCSpatial$LUC_CLASS)
+
+#Dissolve the polygons with the same zone-landuse-LUC combination
+SimplifiedSubZoneLandusLUCSpatial <- unionSpatialPolygons(SubZoneLanduseLUCSpatial, SubZoneLanduseLUCSpatial$ZoneLanduseLUC)
+
+#Find the area of each Landuse-LUC combination for each sub-zone
+SimplifiedSubZoneLandusLUCSpatial$area <- area(SimplifiedSubZoneLandusLUCSpatial)
+
+test <- st_as_sf(SubZoneLanduseLUCSpatial)
+
+df_new <- test %>%
+  group_by(ZoneLanduseLUC) %>%
+  summarise_all(first) 
+#df_new
+
+get.area <- Vectorize(function(adm,reg){
+  int <- gIntersection(gadm[gadm$ID_1==adm,],greg[greg$G1SHORTNAM==reg,],byid=TRUE)
+  if (length(int)==0) return(0)
+  gArea(int)
+})
+result <- outer(gadm.ids,greg.ids,FUN=get.area)
+```
+
+
 
 Get the "nzsgmnt" attributes of the lowest reach in each of the management subzones
 ```{r}
@@ -336,12 +372,20 @@ names(PointSourceNodes) <- c("NodeName","nzsgmnt")
 #Prepare the CASM table with the bonus nzsgmnt column
 PointSourceTable <- CASMNodeTablePreparer(CASMRECNetwork = CompleteSpatialNetwork, NetworkLabelList = NetworkLabelList, TributaryConnectionTable = TributaryConnectionTable,CASMNodes = PointSourceNodes )
 
+#rename the columns to match the CASM requirements
+names(PointSourceTable) <- c("nzsgmnt","Point Source Name","Receiving Stream","Location (km)")
+ 
 #Need to add the point source load to the table
+PointSourceTable$"Annual Load (kg/yr)" <- round(PointSourceSites$TN.kgpy[PointSourceSites$nzsegment %in% PointSourceTable$nzsgmnt],0)
+
 
 #Repeat for the measurement sites
 MeasurementSiteNodes <- MeasurementSites[,c("sID","nzsegment")]
 names(MeasurementSiteNodes) <- c("NodeName","nzsgmnt")
 MeasurementSiteTable <- CASMNodeTablePreparer(CASMRECNetwork = CompleteSpatialNetwork, NetworkLabelList = NetworkLabelList, TributaryConnectionTable = TributaryConnectionTable,CASMNodes= MeasurementSiteNodes)
+
+#rename the columns to match the CASM requirements
+names(MeasurementSiteTable) <- c("nzsgmnt","Site Name or No","Target Stream","Downstream Location (km)")
 ```
 
 
@@ -416,13 +460,21 @@ The tributary connection table needs to be converted to an Excel Spreadsheet.
 
 I need to create an excel table of CASM-Nodes, CASM-Reach-Names, CASM-Reach-Locations, CASM-Reach-Areas, CASM-Reach-Exp.Coeff
 ```{r}
-#xlsx::write.xlsx(TributaryConnectionTable,file.path(DataDirectory,"CASM-Inputs.xlsx"),col.names = TRUE, sheetName="River Network", row.names = FALSE)
+
 
 Out <- createWorkbook()
 
 addWorksheet(Out, "River Network")
 
-writeData(Out, sheet = "River Network", x = TributaryConnectionTable[c("Tributary Name","Confluence Stream","Confluence Location")])
+writeData(Out, sheet = "River Network", x = TributaryConnectionTable[c("Tributary Name","Confluence Stream","Confluence Location (km)")])
+
+addWorksheet(Out, "Point Source")
+
+writeData(Out, sheet = "Point Source", x = PointSourceTable[,-1])
+
+addWorksheet(Out, "Water Quality Sattions")
+
+writeData(Out, sheet = "Water Quality Sattions", x = MeasurementSiteTable[,-1])
 
 saveWorkbook(Out, file.path(DataDirectory,"CASM-Inputs.xlsx"), overwrite = T)
 ```
