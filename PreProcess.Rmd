@@ -224,6 +224,9 @@ CASMNodeTablePreparer <- function(CASMRECNetwork=RECReachNetwork, NetworkLabelLi
 
  #Turn the catchment-based list into a data frame
   CASMNodeTable <- data.frame(t(do.call(cbind,AllTribLocations)))
+  #Convert the numbers into numbers
+  CASMNodeTable$nzsgmnt <- as.numeric(levels(CASMNodeTable$nzsgmnt))[CASMNodeTable$nzsgmnt]
+  CASMNodeTable$TribLocn <- as.numeric(levels(CASMNodeTable$TribLocn))[CASMNodeTable$TribLocn]
   return(CASMNodeTable)
 }
 
@@ -297,30 +300,16 @@ SubZoneLanduseLUCSpatial <- readOGR(dsn =file.path(GISDataDirectory,ZoneLanduseL
                            layer = ZoneLanduseLUCShapefileName)
 SubZoneLanduseLUCSpatial <- spTransform(SubZoneLanduseLUCSpatial,CRS("+init=epsg:2193") )
 ```
-I need to analyse each management sub zone to determine how much area each landuse-LUC combination takes up
+I need to analyse each management sub zone to determine how much area (in hectares) each landuse-LUC combination takes up
 ```{r}
-#Create a new class that combines the submanagement zone (ZONE_CODE), the reclassified landsue (RegSciLand) and the primary Land Use Capability class (LUC_CLASS)
-SubZoneLanduseLUCSpatial@data$ZoneLanduseLUC <- paste0(SubZoneLanduseLUCSpatial$Zone_Code,"-",SubZoneLanduseLUCSpatial$RegiScLand,"-",SubZoneLanduseLUCSpatial$LUC_CLASS)
-
-#Dissolve the polygons with the same zone-landuse-LUC combination
-SimplifiedSubZoneLandusLUCSpatial <- unionSpatialPolygons(SubZoneLanduseLUCSpatial, SubZoneLanduseLUCSpatial$ZoneLanduseLUC)
+#Dissolve/aggregate polygons with the same combination of submanagement zone, land use and LUC
+SimplifiedSubZoneLandusLUCSpatial <- raster::aggregate(SubZoneLanduseLUCSpatial, by=c("Zone_Code",'RegiScLand','LUC_CLASS'))
 
 #Find the area of each Landuse-LUC combination for each sub-zone
-SimplifiedSubZoneLandusLUCSpatial$area <- area(SimplifiedSubZoneLandusLUCSpatial)
+SimplifiedSubZoneLandusLUCSpatial$hectares <- area(SimplifiedSubZoneLandusLUCSpatial) / 10000
 
-test <- st_as_sf(SubZoneLanduseLUCSpatial)
-
-df_new <- test %>%
-  group_by(ZoneLanduseLUC) %>%
-  summarise_all(first) 
-#df_new
-
-get.area <- Vectorize(function(adm,reg){
-  int <- gIntersection(gadm[gadm$ID_1==adm,],greg[greg$G1SHORTNAM==reg,],byid=TRUE)
-  if (length(int)==0) return(0)
-  gArea(int)
-})
-result <- outer(gadm.ids,greg.ids,FUN=get.area)
+#Create a new combined name
+SimplifiedSubZoneLandusLUCSpatial$CombinedClassName <- with(SimplifiedSubZoneLandusLUCSpatial@data, paste0(Zone_Code,"-",RegiScLand,"-",LUC_CLASS)) 
 ```
 
 
@@ -361,7 +350,10 @@ TributaryConnectionTable <- TributaryConnectionCreator(RECNetwork = CompleteSpat
 
 
 ```
-Then create a point source table ready for CASM, and a measurementsite table ready for CASM
+
+Then create a point source table ready for CASM,
+a measurementsite table ready for CASM,
+and a diffuse inputs table ready for CASM
 ```{r}
 #Create a dataframe of just the nzsegment number and the site name
 PointSourceNodes <- PointSourceSites[,c("Site.Name","nzsegment")]
@@ -384,8 +376,31 @@ MeasurementSiteNodes <- MeasurementSites[,c("sID","nzsegment")]
 names(MeasurementSiteNodes) <- c("NodeName","nzsgmnt")
 MeasurementSiteTable <- CASMNodeTablePreparer(CASMRECNetwork = CompleteSpatialNetwork, NetworkLabelList = NetworkLabelList, TributaryConnectionTable = TributaryConnectionTable,CASMNodes= MeasurementSiteNodes)
 
-#rename the columns to match the CASM requirements
+#rename the columns to match the CASM conventions
 names(MeasurementSiteTable) <- c("nzsgmnt","Site Name or No","Target Stream","Downstream Location (km)")
+
+#Repeat for diffuse inputs. This is a special case, because once the points have been found, they need to be joined with all the different landuse/LUC options
+DiffuseInputsSiteNodes <- ManagementSubZoneOutletReachesDF
+names(DiffuseInputsSiteNodes) <- c("NodeName","nzsgmnt")
+DiffuseInputsSiteTable <- CASMNodeTablePreparer(CASMRECNetwork = CompleteSpatialNetwork, NetworkLabelList = NetworkLabelList, TributaryConnectionTable = TributaryConnectionTable,CASMNodes= DiffuseInputsSiteNodes)
+
+DiffuseInputsSiteExtendedTable <- SimplifiedSubZoneLandusLUCSpatial@data
+DiffuseInputsSiteExtendedTable[,c("TribLocn","TribName")] <- DiffuseInputsSiteTable[match(SimplifiedSubZoneLandusLUCSpatial@data$Zone_Code, DiffuseInputsSiteTable$CASMNodeName),c("TribLocn","TribName")]
+
+#I now need to adjust the locations of all the different landuse/LUC options for a single diffuse source point so that they are not all on exactly the same spot.
+#Work along each sub management zone, get all the landuse/LUC classes, and increment the locations by 0.1 km
+DiffuseInputsSiteExtendedTable$AdjustedTriblocn <- DiffuseInputsSiteExtendedTable$TribLocn
+UniqueSubZones <- unique(DiffuseInputsSiteExtendedTable$Zone_Code)
+for(SubZoneIndex in seq_along(UniqueSubZones)) {
+  #get the subzone of interest
+  SubZone <- UniqueSubZones[SubZoneIndex]
+  
+  #Get all the landuse/LUC classes in the subzoone
+  RowsOfInterest <- which(DiffuseInputsSiteExtendedTable$Zone_Code == SubZone)
+  DiffuseInputsSiteExtendedTable$AdjustedTriblocn[RowsOfInterest] <- DiffuseInputsSiteExtendedTable$TribLocn[RowsOfInterest] + seq(0,by = 0.01, length.out = length(RowsOfInterest))
+}
+#rename the columns to match the CAASM conventions
+names(DiffuseInputsSiteExtendedTable) <- c("Zone_Code","Landuse","LUC","Area(m2)","Land Area (ha)","Node Name","Original location (km)", "Receiving Stream", "Discharge Location (km)")
 ```
 
 
@@ -472,16 +487,17 @@ addWorksheet(Out, "Point Source")
 
 writeData(Out, sheet = "Point Source", x = PointSourceTable[,-1])
 
-addWorksheet(Out, "Water Quality Sattions")
+addWorksheet(Out, "Water Quality Stations")
 
-writeData(Out, sheet = "Water Quality Sattions", x = MeasurementSiteTable[,-1])
+writeData(Out, sheet = "Water Quality Stations", x = MeasurementSiteTable[,-1])
+
+addWorksheet(Out, "Diffuse Inputs")
+
+
+writeData(Out, sheet = "Diffuse Inputs", x = DiffuseInputsSiteExtendedTable[,c("Node Name","Receiving Stream","Discharge Location (km)","Land Area (ha)")])
 
 saveWorkbook(Out, file.path(DataDirectory,"CASM-Inputs.xlsx"), overwrite = T)
 ```
 
-Export the spatial data so that I can figure out 
-```{r}
-
-```
 
 
