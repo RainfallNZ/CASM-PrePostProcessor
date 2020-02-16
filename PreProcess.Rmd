@@ -23,7 +23,7 @@ if (!require(mapview)) install.packages('mapview'); library(mapview)
 if (!require(htmltools)) install.packages('htmltools'); library(htmltools)
 ```
 
-Function to crawl the REC network downstream
+Some functions
 ```{r}
 
 #' A function to find the REC network downstream of a reach
@@ -56,11 +56,15 @@ DownstreamReachFinder <- function(RECNetwork=RECReachNetwork,SourceReach=7239110
   } #end of while
   return(DownstreamReaches)
 }
-```
 
-Crawl up the network and define the tributaries
-Start from the bottom and work up to the first intersection. Decide which branch is the mainstem and which is a tributary based on catchment area, then give a new number to the smaller trib and keep going
-```{r}
+#' A function to label an REC network based on tributary size
+#'
+#'This function crawl up an REC network and numbers the tributaries. It starts from the bottom and work up to the first intersection. It decides which branch is the primary and which is a secondary, based on which is the longest to the headwaters, then gives a new number to the smaller tributary and keeps going. It uses the REC V2.4 network. See \href{https://niwa.co.nz/freshwater-and-estuaries/management-tools/river-environment-classification-0}{NIWA REC V2} for details about REC V2.
+#'@param RECNetwork An REC V2 network (either dataframe of spatial dataframe), with at least nzsgmnt, TO_NODE, FROM_NO and hdw_dst attributes
+#'@author Tim Kerr, \email{Tim.Kerr@@Rainfall.NZ}
+#'@return A list (one for each each independent network/diconnected catchment)) of vectors of tributary labels, and a side effect of a file called "OutletReaches.csv" listing the nzsgmnt attributes of the reaches that are considered to be at the bottom of the network.
+#'@keywords REC River Environment Classification
+#'@export
 NetworkLabeler <- function(RECNetwork=MyREC){
 
   #Find the row indices of all the outlet reach's by finding which "to" nodes  don't have a corresponding "from" node
@@ -105,16 +109,20 @@ NetworkLabeler <- function(RECNetwork=MyREC){
 
   return(ReachLabels)
 }
-```
 
-Function to determine where each tributary connects to its parent river. This is needed to provide the river network connectivity table used by CASM.
-CASM understands a network in terms of Tributary Names, Confluence Names and Confluence Locations.
-Confluence Name is the name of the river that a tributary flows into.
-Confluence Location is the distance along the confluence from its start, that the tributary joins it.
-
-This can handle multiple wholly independent catchments (i.e. that are not connected).
-```{r}
-TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, TributaryLabelList = TribLabelList){
+#' A function to determine where each tributary connects to its parent river. This is needed to provide the river network connectivity table used by CASM.
+#' CASM understands a network in terms of Tributary Names, Confluence Names and Confluence Locations.
+#' Confluence Name is the name of the river that a tributary flows into.
+#' Confluence Location is the distance along the confluence from its start, that the tributary joins it.
+#'
+#'@param RECNetwork An REC V2 network (either dataframe of spatial dataframe)
+#'@param TributaryLabelList A list of tributary labels. One llist for each independent/disconnected catchment. The output of the NetworkLabeler() function
+#'@param OutletReachNameLookUpTable A data frame of outlet reach nzsgmnt numbers and real-world names.
+#'@author Tim Kerr, \email{Tim.Kerr@@Rainfall.NZ}
+#'@return A dataframe. One row for each tributary. Columns of nzsgmnt, tributary name, confluence name, confluence location in kilometres.
+#'@keywords REC River Environment Classification CASM
+#'@export
+TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, TributaryLabelList = TribLabelList, OutletReachNameLookUpTable = OutletReachNames){
  
   #For each independent catchment, find the distance along the reach to the confluence
   CatchmentTribLinkages <- lapply(seq_along(TributaryLabelList), function(CatchmentIndex) { 
@@ -174,10 +182,7 @@ TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, Trib
   rownames(AllCatchments) <- NULL
   return(AllCatchments)
 }
-```
 
-
-```{r}
 #' A function to create a CASM node location table given an REC network with additional attributes of CASM tributary labels and CASM tributary distances
 #'
 #'This function generates a data frame of CASM Node names, CASM tributary, CASM tributary location 
@@ -230,6 +235,22 @@ CASMNodeTablePreparer <- function(CASMRECNetwork=RECReachNetwork, NetworkLabelLi
   return(CASMNodeTable)
 }
 
+```
+Create function to add labels to the REC network, based on the result of the network labeler and the OutletReachname look up table
+```{r}
+ReachLabeler <- function(NetworkLabels=NetworkLabelList,OutletReachNamesLookUpTable = OutletReachNames){
+  PrefixedLabels <- lapply(NetworkLabels, function(SingleCatchmentNeworkLabels) {
+    #Get the catchment name
+    CatchmentName <- OutletReachNamesLookUpTable$Name[OutletReachNamesLookUpTable$nzsegment %in% SingleCatchmentNeworkLabels$nzsgmnt]
+    
+    #Prefix the catchment name on to the network labels
+    PrefixedNetworkLabels <- paste0(CatchmentName,"-",SingleCatchmentNeworkLabels$Label)
+    })
+  PrefixedLabelVector <- unlist(PrefixedLabels)
+  REC_nzsegment <- do.call(rbind,NetworkLabels)$nzsgmnt
+  LabeledNetwork <- data.frame(nzsgmnt = REC_nzsegment,Prefixedlabel = PrefixedLabelVector, stringsAsFactors = FALSE)
+  return(LabeledNetwork)
+}
 ```
 
 
@@ -346,7 +367,13 @@ Then create a tributary table ready for CASM
 ```{r}
 
 NetworkLabelList <- NetworkLabeler(CompleteSpatialNetwork)
+
+#Add the labels to the network
+SegmentToPrefixedLabelLookUpTable <- ReachLabeler(NetworkLabelList, OutletReachNames)
+CompleteSpatialNetwork@data$PrefixedLabel <- SegmentToPrefixedLabelLookUpTable$Prefixedlabel[match(CompleteSpatialNetwork@data$nzsgmnt,SegmentToPrefixedLabelLookUpTable$nzsgmnt)]
+
 TributaryConnectionTable <- TributaryConnectionCreator(RECNetwork = CompleteSpatialNetwork, TributaryLabelList = NetworkLabelList)
+
 
 
 ```
@@ -400,7 +427,7 @@ for(SubZoneIndex in seq_along(UniqueSubZones)) {
   DiffuseInputsSiteExtendedTable$AdjustedTriblocn[RowsOfInterest] <- DiffuseInputsSiteExtendedTable$TribLocn[RowsOfInterest] + seq(0,by = 0.01, length.out = length(RowsOfInterest))
 }
 #rename the columns to match the CAASM conventions
-names(DiffuseInputsSiteExtendedTable) <- c("Zone_Code","Landuse","LUC","Area(m2)","Land Area (ha)","Node Name","Original location (km)", "Receiving Stream", "Discharge Location (km)")
+names(DiffuseInputsSiteExtendedTable) <- c("Zone_Code","Landuse","LUC","Land Area (ha)","Node Name","Original location (km)", "Receiving Stream", "Discharge Location (km)")
 ```
 
 
@@ -462,7 +489,7 @@ map <- leaflet::leaflet() %>%
   addPolygons(data = reprojected.data.WGS84$SubZones, color = "black", weight = 3, fillColor = "transparent", label = ~htmlEscape(Zone_Code)) %>%
   addCircleMarkers(data = reprojected.data.WGS84$MeasurementSites, color = "red",label = ~htmlEscape(sID)) %>%
   addCircleMarkers(data = reprojected.data.WGS84$PointSourceSites, color = "black", label = ~htmlEscape(Site.Name)) %>%
-  addPolylines(data = reprojected.data.WGS84$RiverNetwork, color= "blue", label = ~htmlEscape(nzsgmnt))
+  addPolylines(data = reprojected.data.WGS84$RiverNetwork, color= "blue", label = ~htmlEscape(PrefixedLabel))
 map
 
 #save the mapdata as an R file so that it can be used in an RShinyApp

@@ -11,7 +11,7 @@ map <- leaflet::leaflet() %>%
   addPolygons(data = reprojected.data.WGS84$SubZones, color = "black", weight = 3, fillColor = "transparent", label = ~htmlEscape(Zone_Code)) %>%
   addCircleMarkers(data = reprojected.data.WGS84$MeasurementSites, color = "red",label = ~htmlEscape(sID)) %>%
   addCircleMarkers(data = reprojected.data.WGS84$PointSourceSites, color = "black", label = ~htmlEscape(Site.Name)) %>%
-  addPolylines(data = reprojected.data.WGS84$RiverNetwork, color= "blue", label = ~htmlEscape(nzsgmnt))
+  addPolylines(data = reprojected.data.WGS84$RiverNetwork, color= "blue", label = ~htmlEscape(PrefixedLabel))
 
 ui <- fluidPage(
   titlePanel("LWP"),
