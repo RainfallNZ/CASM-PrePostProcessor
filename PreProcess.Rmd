@@ -246,9 +246,10 @@ ReachLabeler <- function(NetworkLabels=NetworkLabelList,OutletReachNamesLookUpTa
     #Prefix the catchment name on to the network labels
     PrefixedNetworkLabels <- paste0(CatchmentName,"-",SingleCatchmentNeworkLabels$Label)
     })
+   
   PrefixedLabelVector <- unlist(PrefixedLabels)
   REC_nzsegment <- do.call(rbind,NetworkLabels)$nzsgmnt
-  LabeledNetwork <- data.frame(nzsgmnt = REC_nzsegment,Prefixedlabel = PrefixedLabelVector, stringsAsFactors = FALSE)
+  LabeledNetwork <- data.frame(nzsgmnt = REC_nzsegment, Prefixedlabel = PrefixedLabelVector, stringsAsFactors = FALSE)
   return(LabeledNetwork)
 }
 ```
@@ -368,9 +369,17 @@ Then create a tributary table ready for CASM
 
 NetworkLabelList <- NetworkLabeler(CompleteSpatialNetwork)
 
-#Add the labels to the network
+
+#Add the tributary labels to the network
+SegmentToLabelLookUpTable <- do.call(rbind,NetworkLabelList)
+CompleteSpatialNetwork@data$Label <- SegmentToLabelLookUpTable$Label[match(CompleteSpatialNetwork@data$nzsgmnt,SegmentToLabelLookUpTable$nzsgmnt)]
+#Add the prefixed labels to the network
 SegmentToPrefixedLabelLookUpTable <- ReachLabeler(NetworkLabelList, OutletReachNames)
 CompleteSpatialNetwork@data$PrefixedLabel <- SegmentToPrefixedLabelLookUpTable$Prefixedlabel[match(CompleteSpatialNetwork@data$nzsgmnt,SegmentToPrefixedLabelLookUpTable$nzsgmnt)]
+
+#Add the 
+#Save the network as a spatial file
+writeOGR(CompleteSpatialNetwork, file.path(GISDataDirectory), "CASM-StreamNetwork", driver="ESRI Shapefile",overwrite_layer=TRUE)
 
 TributaryConnectionTable <- TributaryConnectionCreator(RECNetwork = CompleteSpatialNetwork, TributaryLabelList = NetworkLabelList)
 
