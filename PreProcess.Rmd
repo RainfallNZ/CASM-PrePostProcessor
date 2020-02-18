@@ -12,6 +12,8 @@ if (!require(GISTools)) install.packages('GISTools'); library(GISTools)
 if (!require(dplyr)) install.packages('dplyr'); library(dplyr)
 if (!require(sf)) install.packages('sf'); library(sf)
 if (!require(raster)) install.packages('raster'); library(raster)
+if (!require(cleangeo)) install.packages('cleangeo'); library(cleangeo)
+
 #if (!require(readxl)) install.packages('readxl'); library(readxl)
 if (!require(openxlsx)) install.packages('openxlsx'); library(openxlsx)
 #if (!require(xlsx)) install.packages('xlsx'); library(xlsx)
@@ -270,13 +272,26 @@ GISDataDirectory  <- file.path(DataDirectory,"GIS")
 
 REC_rivers <- "RECV2-Riverlines-Horizons"
 REC_Catchments <- "RECV2-Watersheds-Horizons"
-SubZones <-"Water_Management_Subzones"
 
-SubZones <- "Water_Management_Subzones"
+SubZones <-"Water_Management_Subzones_cleaned"
 
 OutletReachNamesFile <- "OutletReachNames.csv" 
 
-ZoneLanduseLUCShapefileName <- "Landuse_LUC Original"
+LanduseLUCShapefileName <- "Landuse_LUC Original"
+
+SubZoneLanduseLUCShapeFileName <- "ZoneLanduseLUC"
+
+IrrigableLandShapeFileName <- "IrrigableLandLayer"
+
+IrrigatedLandShapeFileName <- "mfe-irrigated-land-area-2017-SHP"
+
+PAWShapeFileName <- "niFSL_fixedgeom"
+
+ClimateShapeFileName <- "ClimateRegions"
+
+MPILeachRateLUTFile <- "MPI_Baseline_N_losses_v1.csv"
+
+MPIClassNameLUTFile <- "MPI_LookupNamesNLosses_v5.csv"
 ```
 
 
@@ -318,20 +333,52 @@ SubZonePolygons <- spTransform(SubZonePolygons,CRS("+init=epsg:2193") )
 OutletReachNames <- read.csv(file.path(DataDirectory,OutletReachNamesFile), stringsAsFactors = FALSE)
 
 #Load the spatial data with the landuse, land use capability and submanagement zones alltogether
-SubZoneLanduseLUCSpatial <- readOGR(dsn =file.path(GISDataDirectory,ZoneLanduseLUCShapefileName),
-                           layer = ZoneLanduseLUCShapefileName)
+#LanduseLUCSpatial <- readOGR(dsn =file.path(GISDataDirectory,LanduseLUCShapefileName),
+#                           layer = LanduseLUCShapefileName)
+#LanduseLUCSpatial <- spTransform(LanduseLUCSpatial,CRS("+init=epsg:2193") )
+
+SubZoneLanduseLUCSpatial <- readOGR(dsn =file.path(GISDataDirectory,SubZoneLanduseLUCShapeFileName),
+                           layer = SubZoneLanduseLUCShapeFileName)
 SubZoneLanduseLUCSpatial <- spTransform(SubZoneLanduseLUCSpatial,CRS("+init=epsg:2193") )
+
+#Load Irrigable land spatial data
+IrrigableLandSpatial <- readOGR(dsn =file.path(GISDataDirectory,IrrigableLandShapeFileName),
+                           layer = IrrigableLandShapeFileName)
+#Load irrigated land spatial data
+IrrigatedLandSpatial <- readOGR(dsn =file.path(GISDataDirectory,IrrigatedLandShapeFileName),
+                           layer = IrrigatedLandShapeFileName)
+
+#Load Plant Available Water (PAW) spatial data
+PAWSpatial <- readOGR(dsn =file.path(GISDataDirectory,PAWShapeFileName),
+                           layer = PAWShapeFileName)
+
+#Load climate spatial data
+ClimateSpatial <- readOGR(dsn =file.path(GISDataDirectory,ClimateShapeFileName),
+                           layer = ClimateShapeFileName)
+
+#Load MPI lookup table of total nitrogen leaching rates based on climate, land use, PAW, irrigation, irrigable land
+MPILeachRateLookUpTable<- read.table(file.path(DataDirectory,MPILeachRateLUTFile),sep=",")
+
+#Load MPI lookup table of the names fo r the classes used to estimate the leach rate
+#This is needed to convert the various input spatial data (landuse, climate etc.) into the number-based classification used by the MPI leach rate look up table
+MPILeachClassNameLookUpTable<- read.table(file.path(DataDirectory,MPIClassNameLUTFile),sep=",")
 ```
-I need to analyse each management sub zone to determine how much area (in hectares) each landuse-LUC combination takes up
+I need to analyse each management sub zone to determine how much area (in hectares) each landuse-LUC combination takes up.
+Unfortunately there is a decrepancy between provided data for the sub management zones. Upon query to Horizons (See email exchange between Ton Snelder and Stephen Collins- Horizons on 17th Feb 2020), the zones within the "Water_Management_Subzones" ESRI shapefile trumps those within the "Landuse_LUC Original". So the land use and LUC is extracted from one file, then intersected with the other.This proved to be problematic because both files had topology errors, primarily small circles in the boundaries, so the files had to be "cleaned". This proved to be most effectively done in QGIS. They were then intersected in QGIS, and then aggregated by RegiScLand, LUC_CLASS and Zone_Code in R (see below) before being saved as a file so that the painfull process doesn't have to be repeated.
 ```{r}
-#Dissolve/aggregate polygons with the same combination of submanagement zone, land use and LUC
-SimplifiedSubZoneLandusLUCSpatial <- raster::aggregate(SubZoneLanduseLUCSpatial, by=c("Zone_Code",'RegiScLand','LUC_CLASS'))
+
+#Intersect the Landuse and LUC with the sub-management zones
+#SubZoneLanduseLUCSpatial <- intersect(LanduseLUCSpatial,SubZonePolygons)
+
+#Aggregate on sub_zone, Landuse and LUC and save for later
+#SubZoneLanduseLUCSpatial <- aggregate(SubZoneLanduseLUCSpatial,by=c("RegiScLand","LUC_CLASS","Zone_Code"))
+#writeOGR(bob,GISDataDirectory,ZoneLanduseLUC,driver='ESRI Shapefile')
 
 #Find the area of each Landuse-LUC combination for each sub-zone
-SimplifiedSubZoneLandusLUCSpatial$hectares <- area(SimplifiedSubZoneLandusLUCSpatial) / 10000
+SubZoneLanduseLUCSpatial$hectares <- area(SubZoneLanduseLUCSpatial) / 10000
 
 #Create a new combined name
-SimplifiedSubZoneLandusLUCSpatial$CombinedClassName <- with(SimplifiedSubZoneLandusLUCSpatial@data, paste0(Zone_Code,"-",RegiScLand,"-",LUC_CLASS)) 
+SubZoneLanduseLUCSpatial$CombinedClassName <- with(SubZoneLanduseLUCSpatial@data, paste0(Zone_Code,"-",RegiScLand,"-",LUC_CLASS)) 
 ```
 
 
@@ -404,8 +451,7 @@ PointSourceTable <- CASMNodeTablePreparer(CASMRECNetwork = CompleteSpatialNetwor
 names(PointSourceTable) <- c("nzsgmnt","Point Source Name","Receiving Stream","Location (km)")
  
 #Need to add the point source load to the table
-PointSourceTable$"Annual Load (kg/yr)" <- round(PointSourceSites$TN.kgpy[PointSourceSites$nzsegment %in% PointSourceTable$nzsgmnt],0)
-
+PointSourceTable$"Annual Load (kg/yr)" <- round(PointSourceSites$TN.kgpy[match(PointSourceTable$nzsgmnt,PointSourceSites$nzsegment)],0)
 
 #Repeat for the measurement sites
 MeasurementSiteNodes <- MeasurementSites[,c("sID","nzsegment")]
@@ -420,8 +466,8 @@ DiffuseInputsSiteNodes <- ManagementSubZoneOutletReachesDF
 names(DiffuseInputsSiteNodes) <- c("NodeName","nzsgmnt")
 DiffuseInputsSiteTable <- CASMNodeTablePreparer(CASMRECNetwork = CompleteSpatialNetwork, NetworkLabelList = NetworkLabelList, TributaryConnectionTable = TributaryConnectionTable,CASMNodes= DiffuseInputsSiteNodes)
 
-DiffuseInputsSiteExtendedTable <- SimplifiedSubZoneLandusLUCSpatial@data
-DiffuseInputsSiteExtendedTable[,c("TribLocn","TribName")] <- DiffuseInputsSiteTable[match(SimplifiedSubZoneLandusLUCSpatial@data$Zone_Code, DiffuseInputsSiteTable$CASMNodeName),c("TribLocn","TribName")]
+DiffuseInputsSiteExtendedTable <- SubZoneLanduseLUCSpatial@data
+DiffuseInputsSiteExtendedTable[,c("TribLocn","TribName")] <- DiffuseInputsSiteTable[match(SubZoneLanduseLUCSpatial@data$Zone_Code, DiffuseInputsSiteTable$CASMNodeName),c("TribLocn","TribName")]
 
 #I now need to adjust the locations of all the different landuse/LUC options for a single diffuse source point so that they are not all on exactly the same spot.
 #Work along each sub management zone, get all the landuse/LUC classes, and increment the locations by 0.1 km
