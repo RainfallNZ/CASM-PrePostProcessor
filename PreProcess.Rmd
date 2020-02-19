@@ -237,9 +237,17 @@ CASMNodeTablePreparer <- function(CASMRECNetwork=RECReachNetwork, NetworkLabelLi
   return(CASMNodeTable)
 }
 
-```
-Create function to add labels to the REC network, based on the result of the network labeler and the OutletReachname look up table
-```{r}
+
+#' A function to add labels to the REC network, based on the result of the network labeler and the OutletReachname look up table
+#'
+#'This function generates a data frame of CASM Node names, CASM tributary, CASM tributary location 
+#'
+#'@param NetworkLabels Ideally the output from the NetworkLabeler function. A list of dataframes (one for each independent river network) with the REC V2 "nzsgmnt" of confluence reaches and "Label" which is the assigned tributary number that the confluence is the start of.
+#'@param OutletReachNamesLookUpTable A dataframe of names and REC V2 reach number (i.e. nzsgmnt attribute) for the lowest reach in each independent catchment.
+#'@author Tim Kerr, \email{Tim.Kerr@@Rainfall.NZ}
+#'@return A dataframe of reach numbers ("nzsgmnt") and tributary labels ("Label")
+#'@keywords REC River Environment Classification CASM
+#'@export
 ReachLabeler <- function(NetworkLabels=NetworkLabelList,OutletReachNamesLookUpTable = OutletReachNames){
   PrefixedLabels <- lapply(NetworkLabels, function(SingleCatchmentNeworkLabels) {
     #Get the catchment name
@@ -256,13 +264,14 @@ ReachLabeler <- function(NetworkLabels=NetworkLabelList,OutletReachNamesLookUpTa
 }
 ```
 
-
+I also need a function which combines PAW, irrigated land, irrigable land, climate and landuse and 
 
 Set directories and data file names
 ```{r}
 #Set the project directory
 #ProjectDirectory <- "C:\\Users\\Owner\\Documents\\Projects\\LWP\\Horizons"   #Tim Kerr's home Windows Desktop
 ProjectDirectory <- "/home/tim/Desktop/Documents/Projects/LWP/Horizons"       #Tim Kerr's Ubuntu laptop
+
 #Set the data directory
 DataDirectory     <- file.path(ProjectDirectory, "Data")
 #Set the GIS directory
@@ -273,7 +282,7 @@ GISDataDirectory  <- file.path(DataDirectory,"GIS")
 REC_rivers <- "RECV2-Riverlines-Horizons"
 REC_Catchments <- "RECV2-Watersheds-Horizons"
 
-REC_MeanFlowFile <- "REC2MeanFlow/REC2MeanFlow.RData"  #This is an RData file
+REC_MeanFlowFile <- "REC2MeanFlow.RData"  #This is an RData file
 
 SubZones <-"Water_Management_Subzones_cleaned"
 
@@ -283,9 +292,9 @@ LanduseLUCShapefileName <- "Landuse_LUC Original"
 
 SubZoneLanduseLUCShapeFileName <- "ZoneLanduseLUC"
 
-IrrigableLandShapeFileName <- "IrrigableLandLayer"
+IrrigableLandShapeFileName <- "IrrigableLand"
 
-IrrigatedLandShapeFileName <- "mfe-irrigated-land-area-2017-SHP"
+IrrigatedLandShapeFileName <- "mfe-irrigated-land-area-2017-SHP/irrigated-land-area-2017-Manawatu"
 
 PAWShapeFileName <- "niFSL_fixedgeom"
 
@@ -309,7 +318,7 @@ RECReachNetwork <- spTransform(RECReachNetwork,CRS("+init=epsg:2193") )
 #RECWatersheds <- spTransform(RECWatersheds,CRS("+init=epsg:2193") )
 
 #Load the mean flow data for the REC V2. This is provided in an rdata file which contains the data frame REC2MeanFlow, with three columns, "nzsegment","QMean", and "us_catarea"
-load(file.path(GISDataDirectory, REC_MeanFlowFile))
+load(file.path(DataDirectory, REC_MeanFlowFile))
 
 #Load the Horizon total nitorigen load measurement sites, previously prepared by Caroline Fraser and called "HZLoads
 load(file.path(DataDirectory,"N_ExpCoeff_Est_HZ_Feb20.rdata"))
@@ -348,20 +357,31 @@ SubZoneLanduseLUCSpatial <- readOGR(dsn =file.path(GISDataDirectory,SubZoneLandu
                            layer = SubZoneLanduseLUCShapeFileName)
 SubZoneLanduseLUCSpatial <- spTransform(SubZoneLanduseLUCSpatial,CRS("+init=epsg:2193") )
 
-#Load Irrigable land spatial data
-IrrigableLandSpatial <- readOGR(dsn =file.path(GISDataDirectory,IrrigableLandShapeFileName),
-                           layer = IrrigableLandShapeFileName)
-#Load irrigated land spatial data
-IrrigatedLandSpatial <- readOGR(dsn =file.path(GISDataDirectory,IrrigatedLandShapeFileName),
-                           layer = IrrigatedLandShapeFileName)
 
-#Load Plant Available Water (PAW) spatial data
-PAWSpatial <- readOGR(dsn =file.path(GISDataDirectory,PAWShapeFileName),
-                           layer = PAWShapeFileName)
 
 #Load climate spatial data
 ClimateSpatial <- readOGR(dsn =file.path(GISDataDirectory,ClimateShapeFileName),
-                           layer = ClimateShapeFileName)
+                           layer = "ClimateRegions-Horizon")
+#Convert to raster
+RasterBase <- raster(resolution = 1000, ext = extent(ClimateSpatial), crs = proj4string(ClimateSpatial) )
+ClimateRaster <- rasterize(ClimateSpatial,RasterBase)
+
+#Load Irrigable land spatial data
+IrrigableLandSpatial <- readOGR(dsn =file.path(GISDataDirectory,IrrigableLandShapeFileName),
+                           layer = "Irrigable-Horizons")
+IrrigableRaster <- rasterize(IrrigableLandSpatial, RasterBase, rep(1,length(IrrigatedLandSpatial)))
+
+#Load irrigated land spatial data
+IrrigatedLandSpatial <- readOGR(dsn =file.path(GISDataDirectory,"mfe-irrigated-land-area-2017-SHP"),
+                           layer = "irrigated-land-area-2017-Manawatu")
+IrrigatedRaster <- rasterize(IrrigatedLandSpatial, RasterBase, rep(1,length(IrrigatedLandSpatial)))
+
+#Load Plant Available Water (PAW) spatial data
+PAWSpatial <- readOGR(dsn =file.path(GISDataDirectory,PAWShapeFileName),
+                           layer = "FSL_Horizons", stringsAsFactors = FALSE)
+#Convert PAW values to numbers (I don't know why they are characters)
+PAWSpatial$PAW_Cat2 <- as.numeric(PAWSpatial$PAW_Cat2)
+PAWRaster <- rasterize(PAWSpatial,RasterBase)
 
 #Load MPI lookup table of total nitrogen leaching rates based on climate, land use, PAW, irrigation, irrigable land
 MPILeachRateLookUpTable<- read.table(file.path(DataDirectory,MPILeachRateLUTFile),sep=",")
