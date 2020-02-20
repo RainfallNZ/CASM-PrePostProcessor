@@ -458,11 +458,8 @@ SubZoneLanduseLUCSpatial$hectares <- raster::area(SubZoneLanduseLUCSpatial) / 10
 #Create a new combined name
 SubZoneLanduseLUCSpatial$CombinedClassName <- with(SubZoneLanduseLUCSpatial@data, paste0(Zone_Code,"-",RegiScLand,"-",LUC_CLASS))
 
-#Get the average leach rate for each polygon
-bob <- st_as_sf(SubZoneLanduseLUCSpatial)
-bob_2 <- st_cast(bob,"POLYGON")
-
-leachvalues <- raster::extract(LeachRate, SubZoneLanduseLUCSpatial, fun = mean, na.rm=TRUE, sp=TRUE)
+##Get the average leach rate for each polygon THIS TAKES ABOUT 75 MINUTES
+#leachvalues <- raster::extract(LeachRate, SubZoneLanduseLUCSpatial, fun = mean, na.rm=TRUE, sp=TRUE)
 ```
 
 
@@ -557,12 +554,21 @@ MeasurementSiteTable$ExpCoef_Uci <- round(MeasurementSites$ExpCoef_Uci_[match(Me
 
 #Repeat for diffuse inputs. This is a special case, because once the points have been found, they need to be joined with all the different landuse/LUC options
 ```{r}
+#Start with all the diffuse source input nodes. These are the sub-management zone outlets
 DiffuseInputsSiteNodes <- ManagementSubZoneOutletReachesDF
 names(DiffuseInputsSiteNodes) <- c("NodeName","nzsgmnt")
+
+#Build up the table of tributary names and locations associated with the diffuse source input sites
 DiffuseInputsSiteTable <- CASMNodeTablePreparer(CASMRECNetwork = CompleteSpatialNetwork, NetworkLabelList = NetworkLabelList, TributaryConnectionTable = TributaryConnectionTable,CASMNodes= DiffuseInputsSiteNodes)
 
+#Now create a bigger version, with a row for each of the different landuse/LUC combinations within each sub-management zone
 DiffuseInputsSiteExtendedTable <- SubZoneLanduseLUCSpatial@data
+
+#Add the locations that we have just previously determined
 DiffuseInputsSiteExtendedTable[,c("TribLocn","TribName")] <- DiffuseInputsSiteTable[match(SubZoneLanduseLUCSpatial@data$Zone_Code, DiffuseInputsSiteTable$CASMNodeName),c("TribLocn","TribName")]
+
+#Add the leach rates
+DiffuseInputsSiteExtendedTable$"LeachRates" <-round( leachvalues@data$LeachRateRaster[match(DiffuseInputsSiteExtendedTable$CombinedClassName,leachvalues@data$CombinedClassName)],1)
 
 #I now need to adjust the locations of all the different landuse/LUC options for a single diffuse source point so that they are not all on exactly the same spot.
 #Work along each sub management zone, get all the landuse/LUC classes, and increment the locations by 0.1 km
@@ -572,12 +578,13 @@ for(SubZoneIndex in seq_along(UniqueSubZones)) {
   #get the subzone of interest
   SubZone <- UniqueSubZones[SubZoneIndex]
   
-  #Get all the landuse/LUC classes in the subzoone
+  #Get all the landuse/LUC classes in the subzone
   RowsOfInterest <- which(DiffuseInputsSiteExtendedTable$Zone_Code == SubZone)
   DiffuseInputsSiteExtendedTable$AdjustedTriblocn[RowsOfInterest] <- DiffuseInputsSiteExtendedTable$TribLocn[RowsOfInterest] + seq(0,by = 0.01, length.out = length(RowsOfInterest))
 }
-#rename the columns to match the CAASM conventions
-names(DiffuseInputsSiteExtendedTable) <- c("Zone_Code","Landuse","LUC","Land Area (ha)","Node Name","Original location (km)", "Receiving Stream", "Discharge Location (km)")
+#rename the columns to match the CASM conventions
+names(DiffuseInputsSiteExtendedTable) <- c("Landuse","LUC","Zone_Code","Land Area (ha)","Node Name","Original location (km)", "Receiving Stream","Export Coeff (kg/ha/yr)","Discharge Location (km)")
+
 ```
 
 
@@ -671,7 +678,7 @@ writeData(Out, sheet = "Water Quality Stations", x = MeasurementSiteTable[,-1])
 addWorksheet(Out, "Diffuse Inputs")
 
 
-writeData(Out, sheet = "Diffuse Inputs", x = DiffuseInputsSiteExtendedTable[,c("Node Name","Receiving Stream","Discharge Location (km)","Land Area (ha)")])
+writeData(Out, sheet = "Diffuse Inputs", x = DiffuseInputsSiteExtendedTable[,c("Node Name","Receiving Stream","Discharge Location (km)","Land Area (ha)","Export Coeff (kg/ha/yr)")])
 
 saveWorkbook(Out, file.path(DataDirectory,"CASM-Inputs.xlsx"), overwrite = T)
 ```
