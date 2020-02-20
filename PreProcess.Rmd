@@ -432,13 +432,13 @@ SubZoneLanduseLUCSpatial <- readOGR(file.path(GISDataDirectory,SubZoneLanduseLUC
 SubZoneLanduseLUCSpatial <- spTransform(SubZoneLanduseLUCSpatial,CRS("+init=epsg:2193") )
 
 #Load the leachingrate data if it exists
-LeachRateRaster <- raster(file.path(GISDataDirectory,LeachRateRasterFileName))
+LeachRate <- raster(file.path(GISDataDirectory,LeachRateRasterFileName))
 
 #**********************************************************
-##If the leach rate raster is missing or needs to be re-created then use the following:
-##LeachRateRaster <- LeachRateRasterCreator()
+##If the leach rate raster file is missing or needs to be re-created then use the following:
+##LeachRate <- LeachRateRasterCreator()
 ##And save it for nexttime
-#writeRaster(LeachRateRaster,file.path(GISDataDirectory,LeachRateRasterFileName),overwrite=TRUE)
+#writeRaster(LeachRate,file.path(GISDataDirectory,LeachRateRasterFileName),overwrite=TRUE)
 #******************************************************************
 ```
 I need to analyse each management sub zone to determine how much area (in hectares) each landuse-LUC combination takes up.
@@ -459,7 +459,10 @@ SubZoneLanduseLUCSpatial$hectares <- raster::area(SubZoneLanduseLUCSpatial) / 10
 SubZoneLanduseLUCSpatial$CombinedClassName <- with(SubZoneLanduseLUCSpatial@data, paste0(Zone_Code,"-",RegiScLand,"-",LUC_CLASS))
 
 #Get the average leach rate for each polygon
-leachvalues <- raster::extract(LeachRateRaster, SubZoneLanduseLUCSpatial, fun = mean, na.rm=TRUE, sp=TRUE)
+bob <- st_as_sf(SubZoneLanduseLUCSpatial)
+bob_2 <- st_cast(bob,"POLYGON")
+
+leachvalues <- raster::extract(LeachRate, SubZoneLanduseLUCSpatial, fun = mean, na.rm=TRUE, sp=TRUE)
 ```
 
 
