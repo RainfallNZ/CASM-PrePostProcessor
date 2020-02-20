@@ -134,7 +134,7 @@ TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, Trib
     
     #Lookup the catchment name based on the OutletReachNames look up table. Assume that only one reach in the OutletReachName look up table will match the reach numbers in the tributary.
     CatchmentName <- OutletReachNames$Name[OutletReachNames$nzsegment %in% CatchmentTribLabels$nzsgmnt]
-    print(CatchmentName)
+    #print(CatchmentName)
     
     #Find all the unique tributary labels
     UniqueTribs <- unique(CatchmentTribLabels$Label)
@@ -175,11 +175,9 @@ TributaryConnectionCreator <- function(RECNetwork = CompleteSpatialNetwork, Trib
     #Lastly, just the useful information is retained, and the labels are formatted to distinguish one catchment from another
     #I now want the tributary label, and the distance along the parent tributary, and the parent tributary label
     TributaryDetails <- data.frame("nzsgmnt"=AllDistances[2,],"Tributary Name" = paste0(CatchmentName,"-",seq(1:ncol(AllDistances))), "Confluence Stream" = paste0(CatchmentName,"-",AllDistances[4,]), "Confluence Location (km)" = round(AllDistances[5,]/1000,0), check.names = FALSE, stringsAsFactors = FALSE)
-    
-    
   })
   
-  #All the catchment information is combined into a single data frame.
+  #Combine all the catchment information into a single data frame.
   AllCatchments <- do.call(rbind,CatchmentTribLinkages)
   rownames(AllCatchments) <- NULL
   return(AllCatchments)
@@ -264,7 +262,81 @@ ReachLabeler <- function(NetworkLabels=NetworkLabelList,OutletReachNamesLookUpTa
 }
 ```
 
-I also need a function which combines PAW, irrigated land, irrigable land, climate and landuse and 
+I also need a function to generate leaching rates based on PAW, irrigated land, irrigable land, climate and landuse data.
+```{r}
+LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,ClimateShapeFileName),
+                                   LanduseData=file.path(GISDataDirectory,SubZoneLanduseLUCShapeFileName),
+                                   IrrigatedLandData=file.path(GISDataDirectory,IrrigatedLandShapeFileName),
+                                   IrrigableLandData=file.path(GISDataDirectory,IrrigableLandShapeFileName),
+                                   PAWData=file.path(GISDataDirectory,PAWShapeFileName),
+                                   MPILeachRateData = file.path(DataDirectory,MPILeachRateLUTFile),
+                                   LanduseToLanduseLUT = file.path(DataDirectory,LanduseToLanduseLUTFile)){
+                                     #Load the lookup table that converts Horizon's Landuse names to the Landuse codes used by the MPI leaching-rate lookup table. 
+                                     LanduseToLanduseLookUpTable <- read.csv(LanduseToLanduseLUT)
+                                     
+                                     #Load MPI lookup table of total nitrogen leaching rates based on climate, land use, PAW, irrigation, irrigable land
+                                     MPILeachRateLookUpTable<- read.csv(MPILeachRateData)
+                                     
+                                     #concatenate all the predictor class values into a long string to provide a single column to look up.
+                                     MPILeachRateLookUpTable$CombinedCriteria <- do.call(paste,MPILeachRateLookUpTable[1:5])
+                                     
+                                     #Load climate spatial data
+                                     ClimateSpatial <- readOGR(ClimateData, stringsAsFactors = FALSE)
+                                     #Make sure the class id is numeric
+                                     ClimateSpatial@data$id <- as.numeric(ClimateSpatial@data$id)
+                                     #Convert to raster, note the creation of a base raster, which all subsequent raster's align to
+                                     RasterBase <- raster(resolution = 1000, ext = extent(ClimateSpatial), crs = proj4string(ClimateSpatial) )
+                                     ClimateRaster <- rasterize(ClimateSpatial,RasterBase,"id")
+                                     
+                                     #Load the spatial data with the landuse, land use capability and submanagement zones alltogether
+                                     SubZoneLanduseLUCSpatial <- readOGR(LanduseData,stringsAsFactors = FALSE)
+                                     SubZoneLanduseLUCSpatial <- spTransform(SubZoneLanduseLUCSpatial,CRS("+init=epsg:2193") )
+                                     
+                                     #Determine the landuse code number needed to calculate MPI leaching rates
+                                     SubZoneLanduseLUCSpatial@data$MPILanduseCode <- LanduseToLanduseLookUpTable$MPIClassNo[match(SubZoneLanduseLUCSpatial@data$RegiScLand,LanduseToLanduseLookUpTable$Horizons_Landuse_Name)]
+                                     LanduseRaster <- rasterize(SubZoneLanduseLUCSpatial,RasterBase,"MPILanduseCode")
+                                     
+                                     #Load Irrigable land spatial data
+                                     IrrigableLandSpatial <- readOGR(IrrigableLandData,stringsAsFactors = FALSE)
+                                     IrrigableLandSpatial@data$Irrigable <- as.numeric(IrrigableLandSpatial@data$Irrigable)
+                                     IrrigableRaster <- rasterize(IrrigableLandSpatial, RasterBase, rep(1,length(IrrigableLandSpatial)),background = 0)
+                                     
+                                     #Load irrigated land spatial data
+                                     IrrigatedLandSpatial <- readOGR(IrrigatedLandData,stringsAsFactors = FALSE)
+                                     IrrigatedLandSpatial@data$Irrigated <- as.numeric(IrrigatedLandSpatial@data$Irrigated)
+                                     IrrigatedRaster <- rasterize(IrrigatedLandSpatial, RasterBase, rep(1,length(IrrigatedLandSpatial)),background = 0)
+                                     
+                                     #Load Plant Available Water (PAW) spatial data
+                                     PAWSpatial <- readOGR(PAWData, stringsAsFactors = FALSE)
+                                     #Convert PAW values to numbers (I don't know why they are characters)
+                                     PAWSpatial$PAW_Cat2 <- as.numeric(PAWSpatial$PAW_Cat2)
+                                     PAWRaster <- rasterize(PAWSpatial,RasterBase,"PAW_Cat2")
+                                     
+                                     #Create a raster brick with all the parameters needed to determine the MPI leach rate
+                                     TotalRaster <- brick(ClimateRaster,LanduseRaster,PAWRaster,IrrigableRaster,IrrigatedRaster)
+                                     names(TotalRaster) <- c("Climate","Landuse","PAW","Irrigable","Irrigated")
+                                     
+                                     #Now calculate leach rates using the MPI lookup table. This is done by using the raster brick of the preditors. Each x,y cell of the brick is sampled (which gives a vector of 5 values) and this vector is converted into a long string. This is compared to the combined-class column in the MPI leaching rate look up table to get the Nitrogen loss.
+                                     
+                                     #Use "calc" to work through each cell x,y cell of the raster brick
+                                     LeachRateRaster <- calc(TotalRaster, function(x) {
+                                       
+                                       #Concatenate the predictor values of the current x,y, cell
+                                       CriteriaToLookup <- paste(x,collapse=" ")
+                                       
+                                       #lookup the current cell's predictor string in the look up table
+                                       N_loss <- MPILeachRateLookUpTable$N_loss[MPILeachRateLookUpTable$CombinedCriteria %in% CriteriaToLookup]
+
+                                       #Catch any missing values and make them NA
+                                       if(length(N_loss) == 0) N_loss <- NA
+                                       
+                                       return(N_loss)
+                                     })
+                                   }
+```
+
+
+
 
 Set directories and data file names
 ```{r}
@@ -290,19 +362,23 @@ OutletReachNamesFile <- "OutletReachNames.csv"
 
 LanduseLUCShapefileName <- "Landuse_LUC Original"
 
-SubZoneLanduseLUCShapeFileName <- "ZoneLanduseLUC"
+SubZoneLanduseLUCShapeFileName <- "ZoneLanduseLUC/ZoneLanduseLUC.shp"
 
-IrrigableLandShapeFileName <- "IrrigableLand"
+IrrigableLandShapeFileName <- "IrrigableLand/Irrigable-Horizons.shp"
 
-IrrigatedLandShapeFileName <- "mfe-irrigated-land-area-2017-SHP/irrigated-land-area-2017-Manawatu"
+IrrigatedLandShapeFileName <- "mfe-irrigated-land-area-2017-SHP/irrigated-land-area-2017-Manawatu.shp"
 
-PAWShapeFileName <- "niFSL_fixedgeom"
+PAWShapeFileName <- "niFSL_fixedgeom/FSL_Horizons.shp"
 
-ClimateShapeFileName <- "ClimateRegions"
+ClimateShapeFileName <- "ClimateRegions/ClimateRegions-Horizon.shp"
 
 MPILeachRateLUTFile <- "MPI_Baseline_N_losses_v1.csv"
 
 MPIClassNameLUTFile <- "MPI_LookupNamesNLosses_v5.csv"
+
+LanduseToLanduseLUTFile <- "LanduseToLanduseLookUpTable.csv"
+
+LeachRateRasterFileName <- "LeachRateRaster.tif"
 ```
 
 
@@ -322,12 +398,12 @@ load(file.path(DataDirectory, REC_MeanFlowFile))
 
 #Load the Horizon total nitorigen load measurement sites, previously prepared by Caroline Fraser and called "HZLoads
 load(file.path(DataDirectory,"N_ExpCoeff_Est_HZ_Feb20.rdata"))
-#Remove the duplicate sites
-MeasurementSites <- HZLoads[!duplicated(HZLoads$nzsegment),]
+#Select just the TN sites
+MeasurementSites <- HZLoads[which(HZLoads$npID=="TN"),]
 
 #Create a spatial points object set to NZTM
 MeasurementSitesSpatial <-SpatialPointsDataFrame(coords = MeasurementSites[,c("NZTM.X","NZTM.Y")],
-                                               data = MeasurementSites[,1:3],
+                                               data = MeasurementSites[,1:13],
                                                proj4string = CRS("+init=epsg:2193"))
 
 
@@ -352,43 +428,18 @@ OutletReachNames <- read.csv(file.path(DataDirectory,OutletReachNamesFile), stri
 #LanduseLUCSpatial <- readOGR(dsn =file.path(GISDataDirectory,LanduseLUCShapefileName),
 #                           layer = LanduseLUCShapefileName)
 #LanduseLUCSpatial <- spTransform(LanduseLUCSpatial,CRS("+init=epsg:2193") )
-
-SubZoneLanduseLUCSpatial <- readOGR(dsn =file.path(GISDataDirectory,SubZoneLanduseLUCShapeFileName),
-                           layer = SubZoneLanduseLUCShapeFileName)
+SubZoneLanduseLUCSpatial <- readOGR(file.path(GISDataDirectory,SubZoneLanduseLUCShapeFileName))
 SubZoneLanduseLUCSpatial <- spTransform(SubZoneLanduseLUCSpatial,CRS("+init=epsg:2193") )
 
+#Load the leachingrate data if it exists
+LeachRateRaster <- raster(file.path(GISDataDirectory,LeachRateRasterFileName))
 
-
-#Load climate spatial data
-ClimateSpatial <- readOGR(dsn =file.path(GISDataDirectory,ClimateShapeFileName),
-                           layer = "ClimateRegions-Horizon")
-#Convert to raster
-RasterBase <- raster(resolution = 1000, ext = extent(ClimateSpatial), crs = proj4string(ClimateSpatial) )
-ClimateRaster <- rasterize(ClimateSpatial,RasterBase)
-
-#Load Irrigable land spatial data
-IrrigableLandSpatial <- readOGR(dsn =file.path(GISDataDirectory,IrrigableLandShapeFileName),
-                           layer = "Irrigable-Horizons")
-IrrigableRaster <- rasterize(IrrigableLandSpatial, RasterBase, rep(1,length(IrrigatedLandSpatial)))
-
-#Load irrigated land spatial data
-IrrigatedLandSpatial <- readOGR(dsn =file.path(GISDataDirectory,"mfe-irrigated-land-area-2017-SHP"),
-                           layer = "irrigated-land-area-2017-Manawatu")
-IrrigatedRaster <- rasterize(IrrigatedLandSpatial, RasterBase, rep(1,length(IrrigatedLandSpatial)))
-
-#Load Plant Available Water (PAW) spatial data
-PAWSpatial <- readOGR(dsn =file.path(GISDataDirectory,PAWShapeFileName),
-                           layer = "FSL_Horizons", stringsAsFactors = FALSE)
-#Convert PAW values to numbers (I don't know why they are characters)
-PAWSpatial$PAW_Cat2 <- as.numeric(PAWSpatial$PAW_Cat2)
-PAWRaster <- rasterize(PAWSpatial,RasterBase)
-
-#Load MPI lookup table of total nitrogen leaching rates based on climate, land use, PAW, irrigation, irrigable land
-MPILeachRateLookUpTable<- read.table(file.path(DataDirectory,MPILeachRateLUTFile),sep=",")
-
-#Load MPI lookup table of the names fo r the classes used to estimate the leach rate
-#This is needed to convert the various input spatial data (landuse, climate etc.) into the number-based classification used by the MPI leach rate look up table
-MPILeachClassNameLookUpTable<- read.table(file.path(DataDirectory,MPIClassNameLUTFile),sep=",")
+#**********************************************************
+##If the leach rate raster is missing or needs to be re-created then use the following:
+##LeachRateRaster <- LeachRateRasterCreator()
+##And save it for nexttime
+#writeRaster(LeachRateRaster,file.path(GISDataDirectory,LeachRateRasterFileName),overwrite=TRUE)
+#******************************************************************
 ```
 I need to analyse each management sub zone to determine how much area (in hectares) each landuse-LUC combination takes up.
 Unfortunately there is a decrepancy between provided data for the sub management zones. Upon query to Horizons (See email exchange between Ton Snelder and Stephen Collins- Horizons on 17th Feb 2020), the zones within the "Water_Management_Subzones" ESRI shapefile trumps those within the "Landuse_LUC Original". So the land use and LUC is extracted from one file, then intersected with the other.This proved to be problematic because both files had topology errors, primarily small circles in the boundaries, so the files had to be "cleaned". This proved to be most effectively done in QGIS. They were then intersected in QGIS, and then aggregated by RegiScLand, LUC_CLASS and Zone_Code in R (see below) before being saved as a file so that the painfull process doesn't have to be repeated.
@@ -402,10 +453,13 @@ Unfortunately there is a decrepancy between provided data for the sub management
 #writeOGR(bob,GISDataDirectory,ZoneLanduseLUC,driver='ESRI Shapefile')
 
 #Find the area of each Landuse-LUC combination for each sub-zone
-SubZoneLanduseLUCSpatial$hectares <- area(SubZoneLanduseLUCSpatial) / 10000
+SubZoneLanduseLUCSpatial$hectares <- raster::area(SubZoneLanduseLUCSpatial) / 10000
 
 #Create a new combined name
-SubZoneLanduseLUCSpatial$CombinedClassName <- with(SubZoneLanduseLUCSpatial@data, paste0(Zone_Code,"-",RegiScLand,"-",LUC_CLASS)) 
+SubZoneLanduseLUCSpatial$CombinedClassName <- with(SubZoneLanduseLUCSpatial@data, paste0(Zone_Code,"-",RegiScLand,"-",LUC_CLASS))
+
+#Get the average leach rate for each polygon
+leachvalues <- raster::extract(LeachRateRaster, SubZoneLanduseLUCSpatial, fun = mean, na.rm=TRUE, sp=TRUE)
 ```
 
 
@@ -456,9 +510,6 @@ CompleteSpatialNetwork@data$PrefixedLabel <- SegmentToPrefixedLabelLookUpTable$P
 writeOGR(CompleteSpatialNetwork, file.path(GISDataDirectory), "CASM-StreamNetwork", driver="ESRI Shapefile",overwrite_layer=TRUE)
 
 TributaryConnectionTable <- TributaryConnectionCreator(RECNetwork = CompleteSpatialNetwork, TributaryLabelList = NetworkLabelList)
-
-
-
 ```
 
 Then create a point source table ready for CASM,
@@ -479,8 +530,12 @@ names(PointSourceTable) <- c("nzsgmnt","Point Source Name","Receiving Stream","L
  
 #Need to add the point source load to the table
 PointSourceTable$"Annual Load (kg/yr)" <- round(PointSourceSites$TN.kgpy[match(PointSourceTable$nzsgmnt,PointSourceSites$nzsegment)],0)
+```
+
+
 
 #Repeat for the measurement sites
+```{r}
 MeasurementSiteNodes <- MeasurementSites[,c("sID","nzsegment")]
 names(MeasurementSiteNodes) <- c("NodeName","nzsgmnt")
 MeasurementSiteTable <- CASMNodeTablePreparer(CASMRECNetwork = CompleteSpatialNetwork, NetworkLabelList = NetworkLabelList, TributaryConnectionTable = TributaryConnectionTable,CASMNodes= MeasurementSiteNodes)
@@ -491,10 +546,14 @@ names(MeasurementSiteTable) <- c("nzsgmnt","Site Name or No","Target Stream","Do
 #Add the mean annual flow to the table
 MeasurementSiteTable$"Mean flow (m3/s)" <- round(REC2MeanFlow$QMean[match(MeasurementSiteTable$nzsgmnt, REC2MeanFlow$nzsegment)],1)
 
-#add mean flow data to the measurement site data
-MeasurementSitesSpatial@data$QMean <- 
+#Add a variety of other fields from the Measurement Site data
+MeasurementSiteTable$ExpCoef <- round(MeasurementSites$ExpCoef[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
+MeasurementSiteTable$ExpCoef_Lci <- round(MeasurementSites$ExpCoef_Lci_[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
+MeasurementSiteTable$ExpCoef_Uci <- round(MeasurementSites$ExpCoef_Uci_[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
+```
 
 #Repeat for diffuse inputs. This is a special case, because once the points have been found, they need to be joined with all the different landuse/LUC options
+```{r}
 DiffuseInputsSiteNodes <- ManagementSubZoneOutletReachesDF
 names(DiffuseInputsSiteNodes) <- c("NodeName","nzsgmnt")
 DiffuseInputsSiteTable <- CASMNodeTablePreparer(CASMRECNetwork = CompleteSpatialNetwork, NetworkLabelList = NetworkLabelList, TributaryConnectionTable = TributaryConnectionTable,CASMNodes= DiffuseInputsSiteNodes)
@@ -521,47 +580,47 @@ names(DiffuseInputsSiteExtendedTable) <- c("Zone_Code","Landuse","LUC","Land Are
 
 Create a plot
 ```{r}
-plot(SubZonePolygons, col = "transparent")
-plot(CompleteSpatialNetwork, col = "blue", add=TRUE)
-plot(PointSourceSitesSpatial, add=TRUE, col = "red")
-plot(MeasurementSitesSpatial, add=TRUE, col = "black")
+# plot(SubZonePolygons, col = "transparent")
+# plot(CompleteSpatialNetwork, col = "blue", add=TRUE)
+# plot(PointSourceSitesSpatial, add=TRUE, col = "red")
+#plot(MeasurementSitesSpatial, add=TRUE, col = "black")
 ```
 Or another plot
 ```{r}
-#Put all the spatial data in a list for simplicity
-SpatialData <- list(MeasurementSites=MeasurementSitesSpatial, PointSourceSites=PointSourceSitesSpatial,
-                    SubZones=SubZonePolygons,RiverNetwork=CompleteSpatialNetwork)
-#Get the extents of the area in lat lon
-MapExtentLatLon <- extent(projectExtent(SubZonePolygons, crs('+init=epsg:4326')))
-#Expand the extents to provide extents for the topographical map to download
-MapExtents <- MapExtentLatLon + 0.005
-LINZAPIToken <- "85df745fa5d446fea241dd5ae40add85"
-#And use those extents to get the Topo250 data. Note that I seem to need to download the data first, then load it into R.
-download.file(paste0("https://data.linz.govt.nz/services;key=",LINZAPIToken,"/wms?service=WMS&version=1.1.1&request=GetMap&layers=layer-50798&format=image/geotiff&width=1456&height=1600&bbox=",MapExtents@xmin,",",MapExtents@ymin,",",MapExtents@xmax,",",MapExtents@ymax),destfile <- file.path(GISDataDirectory,"TopoNZ.tif"))
-Topo250Map <- stack(file.path(GISDataDirectory,"TopoNZ.tif"))
-#Need to set NA values to 0
-values(Topo250Map)[is.na(values(Topo250Map))] <- 0
-
-#Reproject the other spatial data to the maps projection ready for plotting
-reprojected.data <- lapply(SpatialData, spTransform,Topo250Map@crs)
-list2env(reprojected.data,env=.GlobalEnv)
-
-{
-plotRGB(Topo250Map,colNA="white")
-plot(SubZones, add=TRUE)
-points(MeasurementSites,pch=20)
-points(PointSourceSites, pch = 8, col = "dark green")
-lines(RiverNetwork, col = "blue")
-legend("topleft",bty="n",legend=c("SubZones","Measurement \nSites","Point Source Sites","River \nNetwork"),pch=c(0,20,8,NA),pt.cex=c(1.3,1,1,NA),merge=TRUE,lty=c(-1,-1,-1,1),col=c("black","black","dark green","blue"))
-north.arrow(xb=par("usr")[1] + 0.0015,yb=par("usr")[3]+0.0009, len = 0.0002)
-map.scale(xc=par("usr")[1] + 0.0015,yc=-42.89077,len=1/(1110.91/2.5), units= "metres", ndivs=1, subdiv = 250)
-}
-
-#Generate a plot file
-dev.copy(png,file=file.path(DataDirectory,
-                            "OverviewMap.png")
-         ,width=19,height=28,units="cm",res=600,family="Arial",pointsize=8)
-invisible(dev.off())
+# #Put all the spatial data in a list for simplicity
+# SpatialData <- list(MeasurementSites=MeasurementSitesSpatial, PointSourceSites=PointSourceSitesSpatial,
+#                     SubZones=SubZonePolygons,RiverNetwork=CompleteSpatialNetwork)
+# #Get the extents of the area in lat lon
+# MapExtentLatLon <- extent(projectExtent(SubZonePolygons, crs('+init=epsg:4326')))
+# #Expand the extents to provide extents for the topographical map to download
+# MapExtents <- MapExtentLatLon + 0.005
+# LINZAPIToken <- "85df745fa5d446fea241dd5ae40add85"
+# #And use those extents to get the Topo250 data. Note that I seem to need to download the data first, then load it into R.
+# download.file(paste0("https://data.linz.govt.nz/services;key=",LINZAPIToken,"/wms?service=WMS&version=1.1.1&request=GetMap&layers=layer-50798&format=image/geotiff&width=1456&height=1600&bbox=",MapExtents@xmin,",",MapExtents@ymin,",",MapExtents@xmax,",",MapExtents@ymax),destfile <- file.path(GISDataDirectory,"TopoNZ.tif"))
+# Topo250Map <- stack(file.path(GISDataDirectory,"TopoNZ.tif"))
+# #Need to set NA values to 0
+# values(Topo250Map)[is.na(values(Topo250Map))] <- 0
+# 
+# #Reproject the other spatial data to the maps projection ready for plotting
+# reprojected.data <- lapply(SpatialData, spTransform,Topo250Map@crs)
+# list2env(reprojected.data,env=.GlobalEnv)
+# 
+# {
+# plotRGB(Topo250Map,colNA="white")
+# plot(SubZones, add=TRUE)
+# points(MeasurementSites,pch=20)
+# points(PointSourceSites, pch = 8, col = "dark green")
+# lines(RiverNetwork, col = "blue")
+# legend("topleft",bty="n",legend=c("SubZones","Measurement \nSites","Point Source Sites","River \nNetwork"),pch=c(0,20,8,NA),pt.cex=c(1.3,1,1,NA),merge=TRUE,lty=c(-1,-1,-1,1),col=c("black","black","dark green","blue"))
+# north.arrow(xb=par("usr")[1] + 0.0015,yb=par("usr")[3]+0.0009, len = 0.0002)
+# map.scale(xc=par("usr")[1] + 0.0015,yc=-42.89077,len=1/(1110.91/2.5), units= "metres", ndivs=1, subdiv = 250)
+# }
+# 
+# #Generate a plot file
+# dev.copy(png,file=file.path(DataDirectory,
+#                             "OverviewMap.png")
+#          ,width=19,height=28,units="cm",res=600,family="Arial",pointsize=8)
+#invisible(dev.off())
 ```
 Or another plot
 ```{r}
