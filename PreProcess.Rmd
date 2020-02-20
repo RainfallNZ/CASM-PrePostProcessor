@@ -316,6 +316,16 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
                                      TotalRaster <- brick(ClimateRaster,LanduseRaster,PAWRaster,IrrigableRaster,IrrigatedRaster)
                                      names(TotalRaster) <- c("Climate","Landuse","PAW","Irrigable","Irrigated")
                                      
+                                     # #Ton asked me to find which Horizon's predictor combinations didn't exist in the MPI look up table.
+                                     # #Here is how to do that:
+                                     # raspt <- rasterToPoints(TotalRaster)
+                                     # PredictorCombinations <- as.data.frame(raspt[,c(3:7)])
+                                     # UniquePredictorCombinations <- unique(PredictorCombinations)
+                                     # names(UniquePredictorCombinations) <- names(MPILeachRateLookUpTable)[1:5]
+                                     # library(dplyr)
+                                     # bob <- anti_join(UniquePredictorCombinations, MPILeachRateLookUpTable[,1:5])
+                                     # charlie <- bob[complete.cases(bob),]
+                                     # write.table(charlie,file.path(DataDirectory,"MissingLeachRatePredictorCombinations.csv"),sep=",",quote=FALSE, row.names = FALSE)
                                      #Now calculate leach rates using the MPI lookup table. This is done by using the raster brick of the preditors. Each x,y cell of the brick is sampled (which gives a vector of 5 values) and this vector is converted into a long string. This is compared to the combined-class column in the MPI leaching rate look up table to get the Nitrogen loss.
                                      
                                      #Use "calc" to work through each cell x,y cell of the raster brick
