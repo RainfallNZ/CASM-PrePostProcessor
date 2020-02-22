@@ -328,17 +328,22 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
                                      # write.table(charlie,file.path(DataDirectory,"MissingLeachRatePredictorCombinations.csv"),sep=",",quote=FALSE, row.names = FALSE)
                                      #Now calculate leach rates using the MPI lookup table. This is done by using the raster brick of the preditors. Each x,y cell of the brick is sampled (which gives a vector of 5 values) and this vector is converted into a long string. This is compared to the combined-class column in the MPI leaching rate look up table to get the Nitrogen loss.
                                      
+                                     #Create a criteria raster
+
+                                     
                                      #Use "calc" to work through each cell x,y cell of the raster brick
                                      LeachRateRaster <- calc(TotalRaster, function(x) {
-                                       
+                                       #i <<- i+1
+                                       #if(i %in% 42153) browser()
                                        #Concatenate the predictor values of the current x,y, cell
                                        CriteriaToLookup <- paste(x,collapse=" ")
-                                       
+                                       #if(complete.cases(x)) browser()
                                        #lookup the current cell's predictor string in the look up table
                                        N_loss <- MPILeachRateLookUpTable$N_loss[MPILeachRateLookUpTable$CombinedCriteria %in% CriteriaToLookup]
 
                                        #Catch any missing values and make them NA
                                        if(length(N_loss) == 0) N_loss <- NA
+                                       #if(is.na(N_loss)) N_loss <- NA
                                        
                                        return(N_loss)
                                      })
@@ -382,7 +387,7 @@ PAWShapeFileName <- "niFSL_fixedgeom/FSL_Horizons.shp"
 
 ClimateShapeFileName <- "ClimateRegions/ClimateRegions-Horizon.shp"
 
-MPILeachRateLUTFile <- "MPI_Baseline_N_losses_v1.csv"
+MPILeachRateLUTFile <- "MPI_Baseline_N_losses_v2.csv"
 
 MPIClassNameLUTFile <- "MPI_LookupNamesNLosses_v5.csv"
 
@@ -410,6 +415,11 @@ load(file.path(DataDirectory, REC_MeanFlowFile))
 load(file.path(DataDirectory,"N_ExpCoeff_Est_HZ_Feb20.rdata"))
 #Select just the TN sites
 MeasurementSites <- HZLoads[which(HZLoads$npID=="TN"),]
+
+#Calculate loads as t/y
+MeasurementSites$load <- round(MeasurementSites$ExpCoef * MeasurementSites$CATCHAREA / 10000,2)
+MeasurementSites$load_Uci <- round(MeasurementSites$ExpCoef_Uci_ * MeasurementSites$CATCHAREA / 10000,2)
+MeasurementSites$load_Lci <- round(MeasurementSites$ExpCoef_Lci_ * MeasurementSites$CATCHAREA / 10000,2)
 
 #Create a spatial points object set to NZTM
 MeasurementSitesSpatial <-SpatialPointsDataFrame(coords = MeasurementSites[,c("NZTM.X","NZTM.Y")],
@@ -463,7 +473,7 @@ Unfortunately there is a decrepancy between provided data for the sub management
 #writeOGR(bob,GISDataDirectory,ZoneLanduseLUC,driver='ESRI Shapefile')
 
 #Find the area of each Landuse-LUC combination for each sub-zone
-SubZoneLanduseLUCSpatial$hectares <- raster::area(SubZoneLanduseLUCSpatial) / 10000
+SubZoneLanduseLUCSpatial$hectares <- round(raster::area(SubZoneLanduseLUCSpatial) / 10000,1)
 
 #Create a new combined name
 SubZoneLanduseLUCSpatial$CombinedClassName <- with(SubZoneLanduseLUCSpatial@data, paste0(Zone_Code,"-",RegiScLand,"-",LUC_CLASS))
@@ -557,9 +567,9 @@ names(MeasurementSiteTable) <- c("nzsgmnt","Site Name or No","Target Stream","Do
 MeasurementSiteTable$"Mean flow (m3/s)" <- round(REC2MeanFlow$QMean[match(MeasurementSiteTable$nzsgmnt, REC2MeanFlow$nzsegment)],1)
 
 #Add a variety of other fields from the Measurement Site data
-MeasurementSiteTable$ExpCoef <- round(MeasurementSites$ExpCoef[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
-MeasurementSiteTable$ExpCoef_Lci <- round(MeasurementSites$ExpCoef_Lci_[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
-MeasurementSiteTable$ExpCoef_Uci <- round(MeasurementSites$ExpCoef_Uci_[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
+MeasurementSiteTable$'Load (tpy)' <- round(MeasurementSites$load[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
+MeasurementSiteTable$'Load Lci (tpy)' <- round(MeasurementSites$load_Lci[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
+MeasurementSiteTable$'Load Uci (tpy)' <- round(MeasurementSites$load_Uci[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
 ```
 
 #Repeat for diffuse inputs. This is a special case, because once the points have been found, they need to be joined with all the different landuse/LUC options
@@ -593,7 +603,7 @@ for(SubZoneIndex in seq_along(UniqueSubZones)) {
   DiffuseInputsSiteExtendedTable$AdjustedTriblocn[RowsOfInterest] <- DiffuseInputsSiteExtendedTable$TribLocn[RowsOfInterest] + seq(0,by = 0.01, length.out = length(RowsOfInterest))
 }
 #rename the columns to match the CASM conventions
-names(DiffuseInputsSiteExtendedTable) <- c("Landuse","LUC","Zone_Code","Land Area (ha)","Node Name","Original location (km)", "Receiving Stream","Export Coeff (kg/ha/yr)","Discharge Location (km)")
+names(DiffuseInputsSiteExtendedTable) <- c("Landuse","LUC","Zone_Code","MPILanduseClass","Land Area (ha)","Node Name","Original location (km)", "Receiving Stream","Export Coeff (kg/ha/yr)","Discharge Location (km)")
 
 ```
 
