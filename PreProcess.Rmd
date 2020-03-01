@@ -399,6 +399,7 @@ TargetZonesFileName <- "Target_subzones"
 
 Chunk to find the total area of each Climate-PAW class within all the target Dairy-LUC combinations, and all the Irrigted Sheep and Beef-LUC combinations.
 By Special request from Horizons.
+****Don't run this unless you specifically need it!!****
 ```{r}
 
 
@@ -585,8 +586,27 @@ SubZoneLanduseLUCSpatial$hectares <- round(raster::area(SubZoneLanduseLUCSpatial
 #Create a new combined name
 SubZoneLanduseLUCSpatial$CombinedClassName <- with(SubZoneLanduseLUCSpatial@data, paste0(Zone_Code,"-",RegiScLand,"-",LUC_CLASS))
 
+#Now break this into each individual polygon. I need to do this before getting the leach rates so that I don't average the leach rates without accounting for area. This is an alternative to using weights when doing the extract.
+
+#Start with a test for a single area
+Whau_3b <- SubZoneLanduseLUCSpatial[SubZoneLanduseLUCSpatial$Zone_Code == "Whau_3b",]
+Whau_3b_Sf <-as(Whau_3b, "sf")
+Whau_3b_Sf_single = st_cast(Whau_3b_Sf,"POLYGON")
+
+Whau_3b_leach <- raster::extract(LeachRate, Whau_3b, fun = mean, na.rm=TRUE, sp=TRUE)
+Whau_3b_leach_weighted <- raster::extract(LeachRate, Whau_3b, fun = mean, na.rm=TRUE, sp=TRUE,weights = TRUE)
+
+Whau_3b_Sf_single_leach <- raster::extract(LeachRate, Whau_3b_Sf_single, fun = mean, na.rm=TRUE, sp=TRUE)
+Whau_3b_Sf_single_leach$hectares <- raster::area(Whau_3b_Sf_single_leach) / 10000
+
+Whau_3b_Sf_single_leach_weighted <- raster::extract(LeachRate, Whau_3b_Sf_single, fun = mean, na.rm=TRUE, sp=TRUE, weights = TRUE)
+Whau_3b_Sf_single_leach_weighted$hectares <- raster::area(Whau_3b_Sf_single_leach_weighted) / 10000
+
+#I found that the sum of the loads (leach rate x area) after weighted extraction is very close to the value determined from the raster. When I repeat using singlepart polygons, the number is simmilar.
+#The conclusion is the weighting is required, and that it works without having to convert to single parts.
+
 ##Get the average leach rate for each polygon THIS TAKES ABOUT 75 MINUTES
-#leachvalues <- raster::extract(LeachRate, SubZoneLanduseLUCSpatial, fun = mean, na.rm=TRUE, sp=TRUE)
+#leachvalues <- raster::extract(LeachRate, SubZoneLanduseLUCSpatial, fun = mean, na.rm=TRUE, sp=TRUE, weights=TRUE)
 ```
 
 
@@ -640,7 +660,7 @@ TributaryConnectionTable <- TributaryConnectionCreator(RECNetwork = CompleteSpat
 ```
 
 Then create a point source table ready for CASM,
-a measurementsite table ready for CASM,
+a measurement site table ready for CASM,
 and a diffuse inputs table ready for CASM
 ```{r}
 #Create a dataframe of just the nzsegment number and the site name
@@ -695,7 +715,7 @@ DiffuseInputsSiteExtendedTable <- SubZoneLanduseLUCSpatial@data
 DiffuseInputsSiteExtendedTable[,c("TribLocn","TribName")] <- DiffuseInputsSiteTable[match(SubZoneLanduseLUCSpatial@data$Zone_Code, DiffuseInputsSiteTable$CASMNodeName),c("TribLocn","TribName")]
 
 #Add the leach rates
-DiffuseInputsSiteExtendedTable$"LeachRates" <-round( leachvalues@data$LeachRateRaster[match(DiffuseInputsSiteExtendedTable$CombinedClassName,leachvalues@data$CombinedClassName)],1)
+DiffuseInputsSiteExtendedTable$"LeachRates" <-round( leachvalues@data$layer[match(DiffuseInputsSiteExtendedTable$CombinedClassName,leachvalues@data$CombinedClassName)],1)
 
 #I now need to adjust the locations of all the different landuse/LUC options for a single diffuse source point so that they are not all on exactly the same spot.
 #Work along each sub management zone, get all the landuse/LUC classes, and increment the locations by 0.1 km
@@ -710,7 +730,7 @@ for(SubZoneIndex in seq_along(UniqueSubZones)) {
   DiffuseInputsSiteExtendedTable$AdjustedTriblocn[RowsOfInterest] <- DiffuseInputsSiteExtendedTable$TribLocn[RowsOfInterest] + seq(0,by = 0.01, length.out = length(RowsOfInterest))
 }
 #rename the columns to match the CASM conventions
-names(DiffuseInputsSiteExtendedTable) <- c("Landuse","LUC","Zone_Code","MPILanduseClass","Land Area (ha)","Node Name","Original location (km)", "Receiving Stream","Export Coeff (kg/ha/yr)","Discharge Location (km)")
+names(DiffuseInputsSiteExtendedTable) <- c("Landuse","LUC","Zone_Code","Land Area (ha)","Node Name","Original location (km)", "Receiving Stream","Export Coeff (kg/ha/yr)","Discharge Location (km)")
 
 ```
 
@@ -809,6 +829,29 @@ writeData(Out, sheet = "Diffuse Inputs", x = DiffuseInputsSiteExtendedTable[,c("
 
 saveWorkbook(Out, file.path(DataDirectory,"CASM-Inputs.xlsx"), overwrite = T)
 ```
+ By way of a check, it will be helpful to compare the total sub-management zone loads from the griddeed leachrate data with the total sub-management zone loads from the polgonised zone/landuse/LUC data.
+ Start with the raster data, and get the average leachrate for each zone and multiply by the area.
+ Note that  I need to use the subzones from the SubZone
+ 
+ Then, for the polygonised data, get the load for each polygon, and sum all the polygons in each zone
+```{r}
+#Note that to ensure I am comparing apples with apples, I am using the SubZoneLandUseLUCSpatial data to find the SubZone areas (rather than using the pre-prepared cleaned sub zone spatial data which has been "cleaned" so is slightly different in area!!)
+test <- unionSpatialPolygons(SubZoneLanduseLUCSpatial,IDs = SubZoneLanduseLUCSpatial@data$Zone_Code )
+testid <- sapply(slot(test, "polygons"), function(x) slot(x, "ID"))
+test2 <- SpatialPolygonsDataFrame(test,data.frame(Zone_Code = testid,row.names = testid))
 
+Zoneleachrates <- raster::extract(LeachRate, test2, fun = mean, na.rm=TRUE, sp=TRUE, weights = TRUE)
+Zoneleachrates$area <- raster::area(Zoneleachrates)
+Zoneleachrates$loads <- with(Zoneleachrates@data,layer * area / 10000)
+
+DiffuseInputsSiteExtendedTable$load <- DiffuseInputsSiteExtendedTable$`Export Coeff (kg/ha/yr)` * DiffuseInputsSiteExtendedTable$`Land Area (ha)`
+bob <- ddply(DiffuseInputsSiteExtendedTable, "Zone_Code", function(x) sum(x$load, na.rm=TRUE))
+ddply(DiffuseInputsSiteExtendedTable, "Zone_Code", function(x) sum(x$'Land Area (ha)', na.rm=TRUE))
+
+#Ideally the loads from the raster and the DiffuseinputsSiteExtendedTable would be the same, but they are not!!
+#I have checked that the areas are the same
+
+```
+ 
 
 
