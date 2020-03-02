@@ -276,7 +276,9 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
                                      
                                      #Load MPI lookup table of total nitrogen leaching rates based on climate, land use, PAW, irrigation, irrigable land
                                      MPILeachRateLookUpTable<- read.csv(MPILeachRateData)
-                                     
+                                     #Check for duplicates!! This has ocurred in the past and caused an error later on which took hours to figure out!
+                                     MPILeachRateLookUpTable <- MPILeachRateLookUpTable[!duplicated(MPILeachRateLookUpTable[,1:5]),]
+                                     #browser()
                                      #concatenate all the predictor class values into a long string to provide a single column to look up.
                                      MPILeachRateLookUpTable$CombinedCriteria <- do.call(paste,MPILeachRateLookUpTable[1:5])
                                      
@@ -322,6 +324,9 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
                                      # PredictorCombinations <- as.data.frame(raspt[,c(3:7)])
                                      # UniquePredictorCombinations <- unique(PredictorCombinations)
                                      # names(UniquePredictorCombinations) <- names(MPILeachRateLookUpTable)[1:5]
+                                     # UniquePredictorCombinations <- UniquePredictorCombinations[complete.cases(UniquePredictorCombinations),]
+                                     # Ton also asked for a file of all the unique combinations
+                                     # write.table(UniquePredictorCombinations, file.path(DataDirectory,"UniquePredictorCombinations.csv"),row.names = FALSE, sep=",")
                                      # library(dplyr)
                                      # bob <- anti_join(UniquePredictorCombinations, MPILeachRateLookUpTable[,1:5])
                                      # charlie <- bob[complete.cases(bob),]
@@ -330,10 +335,11 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
                                      
                                      #Create a criteria raster
 
-                                     
+                                     #i <-0
                                      #Use "calc" to work through each cell x,y cell of the raster brick
                                      LeachRateRaster <- calc(TotalRaster, function(x) {
                                        #i <<- i+1
+                                       #print(i)
                                        #if(i %in% 42153) browser()
                                        #Concatenate the predictor values of the current x,y, cell
                                        CriteriaToLookup <- paste(x,collapse=" ")
@@ -343,10 +349,10 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
 
                                        #Catch any missing values and make them NA
                                        if(length(N_loss) == 0) N_loss <- NA
-                                       #if(is.na(N_loss)) N_loss <- NA
                                        
                                        return(N_loss)
                                      })
+
                                    }
 ```
 
@@ -386,7 +392,7 @@ PAWShapeFileName <- "niFSL_fixedgeom/FSL_Horizons.shp"
 
 ClimateShapeFileName <- "ClimateRegions/ClimateRegions-Horizon.shp"
 
-MPILeachRateLUTFile <- "MPI_Baseline_N_losses_v2.csv"
+MPILeachRateLUTFile <- "MPI_Baseline_N_losses_v3.csv"
 
 MPIClassNameLUTFile <- "MPI_LookupNamesNLosses_v5.csv"
 
@@ -588,24 +594,24 @@ SubZoneLanduseLUCSpatial$CombinedClassName <- with(SubZoneLanduseLUCSpatial@data
 
 #Now break this into each individual polygon. I need to do this before getting the leach rates so that I don't average the leach rates without accounting for area. This is an alternative to using weights when doing the extract.
 
-#Start with a test for a single area
-Whau_3b <- SubZoneLanduseLUCSpatial[SubZoneLanduseLUCSpatial$Zone_Code == "Whau_3b",]
-Whau_3b_Sf <-as(Whau_3b, "sf")
-Whau_3b_Sf_single = st_cast(Whau_3b_Sf,"POLYGON")
-
-Whau_3b_leach <- raster::extract(LeachRate, Whau_3b, fun = mean, na.rm=TRUE, sp=TRUE)
-Whau_3b_leach_weighted <- raster::extract(LeachRate, Whau_3b, fun = mean, na.rm=TRUE, sp=TRUE,weights = TRUE)
-
-Whau_3b_Sf_single_leach <- raster::extract(LeachRate, Whau_3b_Sf_single, fun = mean, na.rm=TRUE, sp=TRUE)
-Whau_3b_Sf_single_leach$hectares <- raster::area(Whau_3b_Sf_single_leach) / 10000
-
-Whau_3b_Sf_single_leach_weighted <- raster::extract(LeachRate, Whau_3b_Sf_single, fun = mean, na.rm=TRUE, sp=TRUE, weights = TRUE)
-Whau_3b_Sf_single_leach_weighted$hectares <- raster::area(Whau_3b_Sf_single_leach_weighted) / 10000
+# #Start with a test for a single area
+# Whau_3b <- SubZoneLanduseLUCSpatial[SubZoneLanduseLUCSpatial$Zone_Code == "Whau_3b",]
+# Whau_3b_Sf <-as(Whau_3b, "sf")
+# Whau_3b_Sf_single = st_cast(Whau_3b_Sf,"POLYGON")
+# 
+# Whau_3b_leach <- raster::extract(LeachRate, Whau_3b, fun = mean, na.rm=TRUE, sp=TRUE)
+# Whau_3b_leach_weighted <- raster::extract(LeachRate, Whau_3b, fun = mean, na.rm=TRUE, sp=TRUE,weights = TRUE)
+# 
+# Whau_3b_Sf_single_leach <- raster::extract(LeachRate, Whau_3b_Sf_single, fun = mean, na.rm=TRUE, sp=TRUE)
+# Whau_3b_Sf_single_leach$hectares <- raster::area(Whau_3b_Sf_single_leach) / 10000
+# 
+# Whau_3b_Sf_single_leach_weighted <- raster::extract(LeachRate, Whau_3b_Sf_single, fun = mean, na.rm=TRUE, sp=TRUE, weights = TRUE)
+# Whau_3b_Sf_single_leach_weighted$hectares <- raster::area(Whau_3b_Sf_single_leach_weighted) / 10000
 
 #I found that the sum of the loads (leach rate x area) after weighted extraction is very close to the value determined from the raster. When I repeat using singlepart polygons, the number is simmilar.
 #The conclusion is the weighting is required, and that it works without having to convert to single parts.
 
-##Get the average leach rate for each polygon THIS TAKES ABOUT 75 MINUTES
+##Get the average leach rate for each polygon THIS TAKES ABOUT 5 MINUTES
 #leachvalues <- raster::extract(LeachRate, SubZoneLanduseLUCSpatial, fun = mean, na.rm=TRUE, sp=TRUE, weights=TRUE)
 ```
 
@@ -694,9 +700,9 @@ names(MeasurementSiteTable) <- c("nzsgmnt","Site Name or No","Target Stream","Do
 MeasurementSiteTable$"Mean flow (m3/s)" <- round(REC2MeanFlow$QMean[match(MeasurementSiteTable$nzsgmnt, REC2MeanFlow$nzsegment)],1)
 
 #Add a variety of other fields from the Measurement Site data
-MeasurementSiteTable$'Load (tpy)' <- round(MeasurementSites$load[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
-MeasurementSiteTable$'Load Lci (tpy)' <- round(MeasurementSites$load_Lci[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
-MeasurementSiteTable$'Load Uci (tpy)' <- round(MeasurementSites$load_Uci[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
+MeasurementSiteTable$'Load (kg/yr)' <- round(MeasurementSites$load[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
+MeasurementSiteTable$'Load Lci (kg/yr)' <- round(MeasurementSites$load_Lci[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
+MeasurementSiteTable$'Load Uci (kg/yr)' <- round(MeasurementSites$load_Uci[match(MeasurementSiteTable$"Site Name or No", MeasurementSites$sID)],1)
 ```
 
 #Repeat for diffuse inputs. This is a special case, because once the points have been found, they need to be joined with all the different landuse/LUC options
@@ -845,12 +851,17 @@ Zoneleachrates$area <- raster::area(Zoneleachrates)
 Zoneleachrates$loads <- with(Zoneleachrates@data,layer * area / 10000)
 
 DiffuseInputsSiteExtendedTable$load <- DiffuseInputsSiteExtendedTable$`Export Coeff (kg/ha/yr)` * DiffuseInputsSiteExtendedTable$`Land Area (ha)`
+library(plyr)
 bob <- ddply(DiffuseInputsSiteExtendedTable, "Zone_Code", function(x) sum(x$load, na.rm=TRUE))
+
 ddply(DiffuseInputsSiteExtendedTable, "Zone_Code", function(x) sum(x$'Land Area (ha)', na.rm=TRUE))
 
 #Ideally the loads from the raster and the DiffuseinputsSiteExtendedTable would be the same, but they are not!!
-#I have checked that the areas are the same
-
+#But they are close for most water management sub-zones
+charlie <- cbind(Zoneleachrates@data,bob)
+charlie$load_diff <- charlie$loads - charlie$V1
+charlie$load_diff_percent <- round(charlie$load_diff / charlie$loads * 100,0)
+print(charlie)
 ```
  
 
