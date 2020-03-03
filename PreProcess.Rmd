@@ -287,7 +287,7 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
                                      #Make sure the class id is numeric
                                      ClimateSpatial@data$id <- as.numeric(ClimateSpatial@data$id)
                                      #Convert to raster, note the creation of a base raster, which all subsequent raster's align to
-                                     RasterBase <- raster(resolution = 100, ext = extent(ClimateSpatial), crs = proj4string(ClimateSpatial) )
+                                     RasterBase <- raster(resolution = 1000, ext = extent(ClimateSpatial), crs = proj4string(ClimateSpatial) )
                                      ClimateRaster <- rasterize(ClimateSpatial,RasterBase,"id")
                                      
                                      #Load the spatial data with the landuse, land use capability and submanagement zones alltogether
@@ -385,7 +385,8 @@ DiffuseLoadTableCreator <- function(ZoneLanduseLUCPolygons=SubZoneLanduseLUCSpat
                                      
                                      #Get the mean leach rate for each combined-class level
                                      #I don't need to get area weighted mean because all cells are the same size
-                                     ClassSummaries <- ddply(RasterData,.(CombinedClassNameLevel), summarise, LeachRate =round(mean(LeachRates),1), count =  length(LeachRates), Hectares = count * CellAreaHectares)
+                                     ClassSummaries <- ddply(RasterData,.(CombinedClassNameLevel), function(x) c(LeachRate =round(mean(x$LeachRates),1), count =  length(x$LeachRates), Hectares = length(x$LeachRates) * CellAreaHectares))
+
                                      ClassSummaries$CombinedClassName <- levels(ZoneLanduseLUCRaster)[[1]][ClassSummaries$CombinedClassNameLevel,2]
                                      return(ClassSummaries)
 
@@ -427,13 +428,13 @@ PAWShapeFileName <- "niFSL_fixedgeom/FSL_Horizons.shp"
 
 ClimateShapeFileName <- "ClimateRegions/ClimateRegions-Horizon.shp"
 
-MPILeachRateLUTFile <- "MPI_Baseline_N_losses_v3.csv"
+MPILeachRateLUTFile <- "MPI_Baseline_N_losses_v5.csv"
 
 MPIClassNameLUTFile <- "MPI_LookupNamesNLosses_v5.csv"
 
 LanduseToLanduseLUTFile <- "LanduseToLanduseLookUpTable.csv"
 
-LeachRateRasterFileName <- "LeachRateRaster.tif"
+LeachRateRasterFileName <- "LeachRateRaster 1000x1000.tif"
 
 TargetZonesFileName <- "Target_subzones"
 ```
@@ -650,7 +651,7 @@ SubZoneLanduseLUCSpatial$CombinedClassName <- with(SubZoneLanduseLUCSpatial@data
 #I found that the sum of the loads (leach rate x area) after weighted extraction is very close to the value determined from the raster. When I repeat using singlepart polygons, the number is simmilar.
 #The conclusion is the weighting is required, and that it works without having to convert to single parts.
 
-##Get the average leach rate for each polygon THIS TAKES ABOUT 5 MINUTES for 1km x 1km and 46 mins for 500 m x 500 m
+##Get the average leach rate for each polygon THIS TAKES ABOUT 42 MINUTES for 1km x 1km and 46 mins for 500 m x 500 m
 tic()
 leachvalues <- raster::extract(LeachRate, SubZoneLanduseLUCSpatial, fun = mean, na.rm=TRUE, sp=TRUE, weights=TRUE)
 toc()
@@ -766,10 +767,10 @@ DiffuseInputsSiteExtendedTable[,c("TribLocn","TribName")] <- DiffuseInputsSiteTa
 #DiffuseInputsSiteExtendedTable$"LeachRates" <-round( #leachvalues@data$layer[match(DiffuseInputsSiteExtendedTable$CombinedClassName,leachvalues@data$CombinedClassName)],1)
 
 #Second option uses leach rates that need to be obtained by rasterising the zone-landuse-LUC combinations
-DiffuseLeachRateData <- DiffuseLoadTableCreator(ZoneLanduseLUCPolygons = SubZoneLanduseLUCSpatial,LeachRates = LeachRateRaster)
+DiffuseLeachRateData <- DiffuseLoadTableCreator(ZoneLanduseLUCPolygons = SubZoneLanduseLUCSpatial,LeachRates = LeachRate)
 DiffuseInputsSiteExtendedTable$"LeachRates"<- DiffuseLeachRateData$LeachRate[match(DiffuseInputsSiteExtendedTable$CombinedClassName,DiffuseLeachRateData$CombinedClassName)]
 #Need to use raster-calculated area rather than polygon areas
-DiffuseInputsSiteExtendedTable$`Land Area (ha)` <- DiffuseLeachRateData$Hectares[match(DiffuseInputsSiteExtendedTable$CombinedClassName,DiffuseLeachRateData$CombinedClassName)]
+DiffuseInputsSiteExtendedTable$`RasterBased Land Area (ha)` <- DiffuseLeachRateData$Hectares[match(DiffuseInputsSiteExtendedTable$CombinedClassName,DiffuseLeachRateData$CombinedClassName)]
 #Remove all the surplus combined names. The raster version has much less.
 DiffuseInputsSiteExtendedTable <- DiffuseInputsSiteExtendedTable[complete.cases(DiffuseInputsSiteExtendedTable),]
 
@@ -785,9 +786,9 @@ for(SubZoneIndex in seq_along(UniqueSubZones)) {
   RowsOfInterest <- which(DiffuseInputsSiteExtendedTable$Zone_Code == SubZone)
   DiffuseInputsSiteExtendedTable$AdjustedTriblocn[RowsOfInterest] <- DiffuseInputsSiteExtendedTable$TribLocn[RowsOfInterest] + seq(0,by = 0.01, length.out = length(RowsOfInterest))
 }
-browser()
+
 #rename the columns to match the CASM conventions
-names(DiffuseInputsSiteExtendedTable) <- c("Landuse","LUC","Zone_Code","Land Area (ha)","Node Name","Original location (km)", "Receiving Stream","Export Coeff (kg/ha/yr)","Discharge Location (km)")
+names(DiffuseInputsSiteExtendedTable) <- c("Landuse","LUC","Zone_Code","Polygon Land Area (ha)","Node Name","Original location (km)", "Receiving Stream","Export Coeff (kg/ha/yr)","Land Area (ha)","Discharge Location (km)")
 
 ```
 
