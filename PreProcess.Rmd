@@ -23,6 +23,9 @@ if (!require(viridis)) install.packages('viridis'); library(viridis)   #Provides
 if (!require(shiny)) install.packages('shiny'); library(shiny)
 if (!require(mapview)) install.packages('mapview'); library(mapview)
 if (!require(htmltools)) install.packages('htmltools'); library(htmltools)
+
+if (!require(plyr)) install.packages('plyr'); library(plyr)   #needed for the ddply function
+if (!require(tictoc)) install.packages("tictoc"); library(tictoc)                         #used for timing processing
 ```
 
 Some functions
@@ -287,7 +290,7 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
                                      #Make sure the class id is numeric
                                      ClimateSpatial@data$id <- as.numeric(ClimateSpatial@data$id)
                                      #Convert to raster, note the creation of a base raster, which all subsequent raster's align to
-                                     RasterBase <- raster(resolution = 1000, ext = extent(ClimateSpatial), crs = proj4string(ClimateSpatial) )
+                                     RasterBase <- raster(resolution = 250, ext = extent(ClimateSpatial), crs = proj4string(ClimateSpatial) )
                                      ClimateRaster <- rasterize(ClimateSpatial,RasterBase,"id")
                                      
                                      #Load the spatial data with the landuse, land use capability and submanagement zones alltogether
@@ -375,6 +378,8 @@ DiffuseLoadTableCreator <- function(ZoneLanduseLUCPolygons=SubZoneLanduseLUCSpat
                                      #Create the raster, and allign to the Leach rate raster
                                      ZoneLanduseLUCRaster <- rasterize(ZoneLanduseLUCPolygons,LeachRates,"CombinedClassNameFactor")
                                      levels(ZoneLanduseLUCRaster) <- data.frame(ID=seq(1:3887),CombinedClassName=levels(ZoneLanduseLUCPolygons$CombinedClassNameFactor))
+                                     #Save a copy for later
+                                     writeRaster(ZoneLanduseLUCRaster,file.path(GISDataDirectory,ZoneLanduseLUCRasterFileName),overwrite=TRUE)
                                      
                                      #Now I can get all the leach rate values for all grid cells, and all the combined class names for all the cells
                                      RasterData <- data.frame(LeachRates = values(LeachRates), CombinedClassNameLevel = values(ZoneLanduseLUCRaster))
@@ -434,7 +439,9 @@ MPIClassNameLUTFile <- "MPI_LookupNamesNLosses_v5.csv"
 
 LanduseToLanduseLUTFile <- "LanduseToLanduseLookUpTable.csv"
 
-LeachRateRasterFileName <- "LeachRateRaster 1000x1000.tif"
+LeachRateRasterFileName <- "LeachRateRaster 250x250.tif"
+
+ZoneLanduseLUCRasterFileName <- "ZoneLanduseLUCRaster 250 x 250.tif"
 
 TargetZonesFileName <- "Target_subzones"
 ```
@@ -445,104 +452,104 @@ By Special request from Horizons.
 ```{r}
 
 
-ClimateData=file.path(GISDataDirectory,ClimateShapeFileName)
-                                   LanduseData=file.path(GISDataDirectory,SubZoneLanduseLUCShapeFileName)
-                                   IrrigatedLandData=file.path(GISDataDirectory,IrrigatedLandShapeFileName)
-
-                                   PAWData=file.path(GISDataDirectory,PAWShapeFileName)
-                                   
-                                   #Load climate spatial data
-                                     ClimateSpatial <- readOGR(ClimateData, stringsAsFactors = FALSE)
-                                     #Make sure the class id is numeric
-                                     ClimateSpatial@data$id <- as.numeric(ClimateSpatial@data$id)
-ClimateSpatial <- spTransform(ClimateSpatial,CRS("+init=epsg:2193") )
-                                     
-                                     #Load the spatial data with the landuse, land use capability and submanagement zones alltogether
-                                     SubZoneLanduseLUCSpatial <- readOGR(LanduseData,stringsAsFactors = FALSE)
-                                     SubZoneLanduseLUCSpatial <- spTransform(SubZoneLanduseLUCSpatial,CRS("+init=epsg:2193") )
-                                     
-                                     #Load irrigated land spatial data
-                                     IrrigatedLandSpatial <- readOGR(IrrigatedLandData,stringsAsFactors = FALSE)
-                                     IrrigatedLandSpatial@data$Irrigated <- as.numeric(IrrigatedLandSpatial@data$Irrigated)
-                                     IrrigatedLandSpatial <- spTransform(IrrigatedLandSpatial,CRS("+init=epsg:2193") )
-
-                                     
-                                     #Load Plant Available Water (PAW) spatial data
-                                     PAWSpatial <- readOGR(PAWData, stringsAsFactors = FALSE)
-                                     #Convert PAW values to numbers (I don't know why they are characters)
-                                     PAWSpatial$PAW_Cat2 <- as.numeric(PAWSpatial$PAW_Cat2)
-PAWSpatial <- spTransform(PAWSpatial,CRS("+init=epsg:2193") )
-
-
-TargetZones <- readOGR(file.path(GISDataDirectory,TargetZonesFileName),TargetZonesFileName, stringsAsFactors = FALSE)
-TargetZones <- spTransform(TargetZones,CRS("+init=epsg:2193") )
-
-#Select the target zones from the Land use data
-TargetZoneLanduseLUC <- SubZoneLanduseLUCSpatial[which(SubZoneLanduseLUCSpatial$Zone_Code %in% TargetZones$Zone_Code),]
-
-#only interested in Dairy
-TargetZoneLanduseLUC_Dairy<- TargetZoneLanduseLUC[which(TargetZoneLanduseLUC$RegiScLand =="Dairy"),]
-
-#only interested in irrigated sheep and beef, so select the sheep and beef
-TargetZoneLanduseLUC_SheepAndBeef <- TargetZoneLanduseLUC[which(TargetZoneLanduseLUC$RegiScLand == "Sheep and/or Beef"),]
-#Intersect with irrigated
-TargetZoneLanduseLUC_SheepAndBeef_Irrigated <- intersect(TargetZoneLanduseLUC_SheepAndBeef,IrrigatedLandSpatial)
-#Select just the Irrigated
-TargetZoneLanduseLUC_SheepAndBeef_Irrigated <- TargetZoneLanduseLUC_SheepAndBeef_Irrigated[which(TargetZoneLanduseLUC_SheepAndBeef_Irrigated$Irrigated == 1),]
-
-#Interesect the target zones with Climate
-TargetZoneLanduseLUC_Dairy_Climate <- intersect(TargetZoneLanduseLUC_Dairy,ClimateSpatial)
-
-#And then intersect with PAW
-TargetZoneLanduseLUC_Dairy_Climate_PAW <- intersect(TargetZoneLanduseLUC_Dairy_Climate,PAWSpatial)
-#and add areas
-TargetZoneLanduseLUC_Dairy_Climate_PAW$area <- area(TargetZoneLanduseLUC_Dairy_Climate_PAW)
-#just get the columns we want
-TargetZoneLanduseLUC_Dairy_Climate_PAW <- TargetZoneLanduseLUC_Dairy_Climate_PAW[,c("LUC_CLASS","Zone_Code","Class","id","PAW_Cat2","area")]
-
-#Now sum the areas for the unique combinations of everything.
-#This solution is from https://stackoverflow.com/questions/27137174/sum-a-rows-within-a-column-for-each-unique-combination-r
-library(data.table)
-#Do the summing
-TargetZoneLanduseLUC_Dairy_Climate_PAW_summedAreas <- setDT(TargetZoneLanduseLUC_Dairy_Climate_PAW@data)[, Sum := round(sum(area)/10000,1), by = .(LUC_CLASS,Zone_Code,Class,PAW_Cat2)][]
-
-#Get the unique values
-TargetZoneLanduseLUC_Dairy_Climate_PAW_summedAreas <- unique(TargetZoneLanduseLUC_Dairy_Climate_PAW_summedAreas[,-6])
-
-#Rename
-names(TargetZoneLanduseLUC_Dairy_Climate_PAW_summedAreas) <- c("LUC","Zone","Climate","Climate No.","PAW","Area (Ha)")
-
-#Add the landuse
-DairyData$Landuse <- "Dairy"
-
-
-#Repeat for Irrigated Sheep and Beef
-TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate<- intersect(TargetZoneLanduseLUC_SheepAndBeef_Irrigated,ClimateSpatial)
-TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW <- intersect(TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate,PAWSpatial)
-TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW$area <- area(TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW)
-TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW <- TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW[,c("LUC_CLASS","Zone_Code","Class","id","PAW_Cat2","area")]
-
-
-TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW_summedAreas <- setDT(TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW@data)[, Sum := round(sum(area)/10000,1), by = .(LUC_CLASS,Zone_Code,Class,PAW_Cat2)][]
-
-TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW_summedAreas <- unique(TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW_summedAreas[,-6])
-
-names(TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW_summedAreas) <- c("LUC","Zone","Climate","Climate No.","PAW","Area (Ha)")
-
-
-#Add the landuse
-SheepAndBeefIrrigatedData$Landuse <- "SheepAndBeef_Irrigated"
-
-#Combine the Dairy and the SheepAndBeef data
-CombinedData <- rbind(DairyData,SheepAndBeefIrrigatedData)
-#Reorder the columns
-CombinedData <- CombinedData[,c("Zone","Landuse","LUC","Climate","PAW","Area (Ha)")]
-
-#Re-order the rows
-CombinedData <- CombinedData[order(CombinedData$Zone, CombinedData$Landuse, CombinedData$LUC, CombinedData$Climate, CombinedData$PAW),]
-
-#Write to a file
-write.table(CombinedData, file.path(DataDirectory,"TargetZone_Dairy_and_Irrigated_Sheep_And_Beef_Categorised_Areas.csv"),sep=",",row.names=FALSE,quote=FALSE)
+# ClimateData=file.path(GISDataDirectory,ClimateShapeFileName)
+#                                    LanduseData=file.path(GISDataDirectory,SubZoneLanduseLUCShapeFileName)
+#                                    IrrigatedLandData=file.path(GISDataDirectory,IrrigatedLandShapeFileName)
+# 
+#                                    PAWData=file.path(GISDataDirectory,PAWShapeFileName)
+#                                    
+#                                    #Load climate spatial data
+#                                      ClimateSpatial <- readOGR(ClimateData, stringsAsFactors = FALSE)
+#                                      #Make sure the class id is numeric
+#                                      ClimateSpatial@data$id <- as.numeric(ClimateSpatial@data$id)
+# ClimateSpatial <- spTransform(ClimateSpatial,CRS("+init=epsg:2193") )
+#                                      
+#                                      #Load the spatial data with the landuse, land use capability and submanagement zones alltogether
+#                                      SubZoneLanduseLUCSpatial <- readOGR(LanduseData,stringsAsFactors = FALSE)
+#                                      SubZoneLanduseLUCSpatial <- spTransform(SubZoneLanduseLUCSpatial,CRS("+init=epsg:2193") )
+#                                      
+#                                      #Load irrigated land spatial data
+#                                      IrrigatedLandSpatial <- readOGR(IrrigatedLandData,stringsAsFactors = FALSE)
+#                                      IrrigatedLandSpatial@data$Irrigated <- as.numeric(IrrigatedLandSpatial@data$Irrigated)
+#                                      IrrigatedLandSpatial <- spTransform(IrrigatedLandSpatial,CRS("+init=epsg:2193") )
+# 
+#                                      
+#                                      #Load Plant Available Water (PAW) spatial data
+#                                      PAWSpatial <- readOGR(PAWData, stringsAsFactors = FALSE)
+#                                      #Convert PAW values to numbers (I don't know why they are characters)
+#                                      PAWSpatial$PAW_Cat2 <- as.numeric(PAWSpatial$PAW_Cat2)
+# PAWSpatial <- spTransform(PAWSpatial,CRS("+init=epsg:2193") )
+# 
+# 
+# TargetZones <- readOGR(file.path(GISDataDirectory,TargetZonesFileName),TargetZonesFileName, stringsAsFactors = FALSE)
+# TargetZones <- spTransform(TargetZones,CRS("+init=epsg:2193") )
+# 
+# #Select the target zones from the Land use data
+# TargetZoneLanduseLUC <- SubZoneLanduseLUCSpatial[which(SubZoneLanduseLUCSpatial$Zone_Code %in% TargetZones$Zone_Code),]
+# 
+# #only interested in Dairy
+# TargetZoneLanduseLUC_Dairy<- TargetZoneLanduseLUC[which(TargetZoneLanduseLUC$RegiScLand =="Dairy"),]
+# 
+# #only interested in irrigated sheep and beef, so select the sheep and beef
+# TargetZoneLanduseLUC_SheepAndBeef <- TargetZoneLanduseLUC[which(TargetZoneLanduseLUC$RegiScLand == "Sheep and/or Beef"),]
+# #Intersect with irrigated
+# TargetZoneLanduseLUC_SheepAndBeef_Irrigated <- intersect(TargetZoneLanduseLUC_SheepAndBeef,IrrigatedLandSpatial)
+# #Select just the Irrigated
+# TargetZoneLanduseLUC_SheepAndBeef_Irrigated <- TargetZoneLanduseLUC_SheepAndBeef_Irrigated[which(TargetZoneLanduseLUC_SheepAndBeef_Irrigated$Irrigated == 1),]
+# 
+# #Interesect the target zones with Climate
+# TargetZoneLanduseLUC_Dairy_Climate <- intersect(TargetZoneLanduseLUC_Dairy,ClimateSpatial)
+# 
+# #And then intersect with PAW
+# TargetZoneLanduseLUC_Dairy_Climate_PAW <- intersect(TargetZoneLanduseLUC_Dairy_Climate,PAWSpatial)
+# #and add areas
+# TargetZoneLanduseLUC_Dairy_Climate_PAW$area <- area(TargetZoneLanduseLUC_Dairy_Climate_PAW)
+# #just get the columns we want
+# TargetZoneLanduseLUC_Dairy_Climate_PAW <- TargetZoneLanduseLUC_Dairy_Climate_PAW[,c("LUC_CLASS","Zone_Code","Class","id","PAW_Cat2","area")]
+# 
+# #Now sum the areas for the unique combinations of everything.
+# #This solution is from https://stackoverflow.com/questions/27137174/sum-a-rows-within-a-column-for-each-unique-combination-r
+# library(data.table)
+# #Do the summing
+# TargetZoneLanduseLUC_Dairy_Climate_PAW_summedAreas <- setDT(TargetZoneLanduseLUC_Dairy_Climate_PAW@data)[, Sum := round(sum(area)/10000,1), by = .(LUC_CLASS,Zone_Code,Class,PAW_Cat2)][]
+# 
+# #Get the unique values
+# TargetZoneLanduseLUC_Dairy_Climate_PAW_summedAreas <- unique(TargetZoneLanduseLUC_Dairy_Climate_PAW_summedAreas[,-6])
+# 
+# #Rename
+# names(TargetZoneLanduseLUC_Dairy_Climate_PAW_summedAreas) <- c("LUC","Zone","Climate","Climate No.","PAW","Area (Ha)")
+# 
+# #Add the landuse
+# DairyData$Landuse <- "Dairy"
+# 
+# 
+# #Repeat for Irrigated Sheep and Beef
+# TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate<- intersect(TargetZoneLanduseLUC_SheepAndBeef_Irrigated,ClimateSpatial)
+# TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW <- intersect(TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate,PAWSpatial)
+# TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW$area <- area(TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW)
+# TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW <- TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW[,c("LUC_CLASS","Zone_Code","Class","id","PAW_Cat2","area")]
+# 
+# 
+# TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW_summedAreas <- setDT(TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW@data)[, Sum := round(sum(area)/10000,1), by = .(LUC_CLASS,Zone_Code,Class,PAW_Cat2)][]
+# 
+# TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW_summedAreas <- unique(TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW_summedAreas[,-6])
+# 
+# names(TargetZoneLanduseLUC_SheepAndBeef_Irrigated_Climate_PAW_summedAreas) <- c("LUC","Zone","Climate","Climate No.","PAW","Area (Ha)")
+# 
+# 
+# #Add the landuse
+# SheepAndBeefIrrigatedData$Landuse <- "SheepAndBeef_Irrigated"
+# 
+# #Combine the Dairy and the SheepAndBeef data
+# CombinedData <- rbind(DairyData,SheepAndBeefIrrigatedData)
+# #Reorder the columns
+# CombinedData <- CombinedData[,c("Zone","Landuse","LUC","Climate","PAW","Area (Ha)")]
+# 
+# #Re-order the rows
+# CombinedData <- CombinedData[order(CombinedData$Zone, CombinedData$Landuse, CombinedData$LUC, CombinedData$Climate, CombinedData$PAW),]
+# 
+# #Write to a file
+# write.table(CombinedData, file.path(DataDirectory,"TargetZone_Dairy_and_Irrigated_Sheep_And_Beef_Categorised_Areas.csv"),sep=",",row.names=FALSE,quote=FALSE)
 ```
 
 
@@ -602,10 +609,11 @@ SubZoneLanduseLUCSpatial <- readOGR(file.path(GISDataDirectory,SubZoneLanduseLUC
 SubZoneLanduseLUCSpatial <- spTransform(SubZoneLanduseLUCSpatial,CRS("+init=epsg:2193") )
 
 #Load the leachingrate data if it exists
-LeachRate <- raster(file.path(GISDataDirectory,LeachRateRasterFileName))
+#LeachRate <- raster(file.path(GISDataDirectory,LeachRateRasterFileName))
 
 #**********************************************************
 ##If the leach rate raster file is missing or needs to be re-created then use the following:
+##Takes 5 minutes at 250 m
 ##Note addition of timing to see how long it takes
 #if (!require(tictoc)) install.packages("tictoc"); library(tictoc)                         #used for timing processing
 #tic()
@@ -651,7 +659,7 @@ SubZoneLanduseLUCSpatial$CombinedClassName <- with(SubZoneLanduseLUCSpatial@data
 #I found that the sum of the loads (leach rate x area) after weighted extraction is very close to the value determined from the raster. When I repeat using singlepart polygons, the number is simmilar.
 #The conclusion is the weighting is required, and that it works without having to convert to single parts.
 
-##Get the average leach rate for each polygon THIS TAKES ABOUT 42 MINUTES for 1km x 1km and 46 mins for 500 m x 500 m
+##Get the average leach rate for each polygon THIS TAKES ABOUT 10 MINUTES for 250 x 250 m
 tic()
 leachvalues <- raster::extract(LeachRate, SubZoneLanduseLUCSpatial, fun = mean, na.rm=TRUE, sp=TRUE, weights=TRUE)
 toc()
