@@ -333,7 +333,7 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
                                      # names(UniquePredictorCombinations) <- names(MPILeachRateLookUpTable)[1:5]
                                      # UniquePredictorCombinations <- UniquePredictorCombinations[complete.cases(UniquePredictorCombinations),]
                                      # Ton also asked for a file of all the unique combinations
-                                     # write.table(UniquePredictorCombinations, file.path(DataDirectory,"UniquePredictorCombinations.csv"),row.names = FALSE, sep=",")
+                                     # write.table(UniquePredictorCombinations, file.path(DataDirectory,"UniquePredictorCombinations250x250.csv"),row.names = FALSE, sep=",")
                                      # library(dplyr)
                                      # bob <- anti_join(UniquePredictorCombinations, MPILeachRateLookUpTable[,1:5])
                                      # charlie <- bob[complete.cases(bob),]
@@ -433,7 +433,7 @@ PAWShapeFileName <- "niFSL_fixedgeom/FSL_Horizons.shp"
 
 ClimateShapeFileName <- "ClimateRegions/ClimateRegions-Horizon.shp"
 
-MPILeachRateLUTFile <- "MPI_Baseline_N_losses_v5.csv"
+MPILeachRateLUTFile <- "MPI_Baseline_N_losses_v6.csv"
 
 MPIClassNameLUTFile <- "MPI_LookupNamesNLosses_v5.csv"
 
@@ -615,12 +615,11 @@ SubZoneLanduseLUCSpatial <- spTransform(SubZoneLanduseLUCSpatial,CRS("+init=epsg
 ##If the leach rate raster file is missing or needs to be re-created then use the following:
 ##Takes 5 minutes at 250 m
 ##Note addition of timing to see how long it takes
-#if (!require(tictoc)) install.packages("tictoc"); library(tictoc)                         #used for timing processing
-#tic()
-#LeachRate <- LeachRateRasterCreator()
-#toc()
-##And save it for nexttime
-#writeRaster(LeachRate,file.path(GISDataDirectory,LeachRateRasterFileName),overwrite=TRUE)
+tic()
+LeachRate <- LeachRateRasterCreator()
+toc()
+#And save it for nexttime
+writeRaster(LeachRate,file.path(GISDataDirectory,LeachRateRasterFileName),overwrite=TRUE)
 #******************************************************************
 ```
 I need to analyse each management sub zone to determine how much area (in hectares) each landuse-LUC combination takes up.
