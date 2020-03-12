@@ -324,6 +324,10 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
                                      #Create a raster brick with all the parameters needed to determine the MPI leach rate
                                      TotalRaster <- brick(ClimateRaster,LanduseRaster,PAWRaster,IrrigableRaster,IrrigatedRaster)
                                      names(TotalRaster) <- c("Climate","Landuse","PAW","Irrigable","Irrigated")
+                                    
+                                     #Save a copy for later
+                               #browser()
+                               writeRaster(TotalRaster,file.path(GISDataDirectory,PredictorRasterFileName),overwrite=TRUE)
                                      
                                      # #Ton asked me to find which Horizon's predictor combinations didn't exist in the MPI look up table.
                                      # #Here is how to do that:
@@ -433,11 +437,13 @@ PAWShapeFileName <- "niFSL_fixedgeom/FSL_Horizons.shp"
 
 ClimateShapeFileName <- "ClimateRegions/ClimateRegions-Horizon.shp"
 
-MPILeachRateLUTFile <- "MPI_Baseline_N_losses_v6.csv"
+MPILeachRateLUTFile <- "MPI_Baseline_N_losses_v7.csv"
 
 MPIClassNameLUTFile <- "MPI_LookupNamesNLosses_v5.csv"
 
 LanduseToLanduseLUTFile <- "LanduseToLanduseLookUpTable.csv"
+
+PredictorRasterFileName <- "PredictorRaster 250x250.tif"
 
 LeachRateRasterFileName <- "LeachRateRaster 250x250.tif"
 
@@ -894,11 +900,11 @@ writeData(Out, sheet = "Diffuse Inputs", x = DiffuseInputsSiteExtendedTable[,c("
 
 saveWorkbook(Out, file.path(DataDirectory,"CASM-Inputs.xlsx"), overwrite = T)
 ```
- By way of a check, it will be helpful to compare the total sub-management zone loads from the griddeed leachrate data with the total sub-management zone loads from the polgonised zone/landuse/LUC data.
- Start with the raster data, and get the average leachrate for each zone and multiply by the area.
+ By way of a check, it will be helpful to compare the total sub-management zone loads from the griddeed leachrate data with the total sub-management zone loads from the zone/landuse/LUC data.
+ Start with the leach rate raster data, and get the average leachrate for each zone and multiply by the area.
  Note that  I need to use the subzones from the SubZone
  
- Then, for the polygonised data, get the load for each polygon, and sum all the polygons in each zone
+ Then, as a check, get the load for each zone-landuse-LUC combination, and sum a in each zone
 ```{r}
 #Note that to ensure I am comparing apples with apples, I am using the SubZoneLandUseLUCSpatial data to find the SubZone areas (rather than using the pre-prepared cleaned sub zone spatial data which has been "cleaned" so is slightly different in area!!)
 test <- unionSpatialPolygons(SubZoneLanduseLUCSpatial,IDs = SubZoneLanduseLUCSpatial@data$Zone_Code )
