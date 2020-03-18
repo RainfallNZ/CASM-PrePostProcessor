@@ -263,10 +263,7 @@ ReachLabeler <- function(NetworkLabels=NetworkLabelList,OutletReachNamesLookUpTa
   LabeledNetwork <- data.frame(nzsgmnt = REC_nzsegment, Prefixedlabel = PrefixedLabelVector, stringsAsFactors = FALSE)
   return(LabeledNetwork)
 }
-```
 
-I also need a function to generate leaching rates based on PAW, irrigated land, irrigable land, climate and landuse data.
-```{r}
 #' A function to combine spatial data sources of climate, land use, irrigation and soil properties, and uses them to lookup leach rates based on a Ministry of Primary Industries designation. The processing is carried out at a 250 m x 250 m grid scale.
 #'
 #'This function generates a raster object of leach rates 
@@ -280,7 +277,7 @@ I also need a function to generate leaching rates based on PAW, irrigated land, 
 #'@param LanduseToLanduseLUT A csv file with two columns, one designated as "MPIClassNo" with the Ministry for Primary Industries land use classes, as used in the MPILeachRateDatalookup table. The other column designated "Horizons_Landuse_Name" with the land use names as provided in the LanduseData spatial data file.
 
 #'@author Tim Kerr, \email{Tim.Kerr@@Rainfall.NZ}
-#'@return A dataframe of reach numbers ("nzsgmnt") and tributary labels ("Label")
+#'@return A raster object of leach rates
 #'@keywords REC River Environment Classification CASM
 #'@export
 LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,ClimateShapeFileName),
@@ -379,12 +376,19 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
                                      })
 
                                    }
-```
+
+#' A function to  rasterize the zone-landuse-LUC data, and associate the leach rate with each zone-landuse-LUC combination to enable finding the average leach rate and area for each combination.
+#'
+#'This function generates a raster object of leach rates 
+#'
+#'@param ZoneLanduseLUCPolygons A polygon spatial data file of the water management zone - land use - LUC intersection.
+#'@param LeachRates A raster of leach rates. The output from the LeachRateRasterCreator function.
+#'@author Tim Kerr, \email{Tim.Kerr@@Rainfall.NZ}
+#'@return A data frame of average leach rates for each water management zone-landuse-LUC combination
+#'@keywords REC River Environment Classification CASM
+#'@export
 
 
-I need to rasterize the zone-landuse-LUC data, and associate the leach rate with each zone-landuse-LUC combination.
-I can then find the average leach rate and area for each combination.
-```{r}
 DiffuseLoadTableCreator <- function(ZoneLanduseLUCPolygons=SubZoneLanduseLUCSpatial,
                                    LeachRates=LeachRateRaster){
   
@@ -469,7 +473,7 @@ ZoneLanduseLUCRasterFileName <- "ZoneLanduseLUCRaster 250 x 250.tif"
 TargetZonesFileName <- "Target_subzones"
 ```
 
-Chunk to find the total area of each Climate-PAW class within all the target Dairy-LUC combinations, and all the Irrigted Sheep and Beef-LUC combinations.
+Find the total area of each Climate-PAW class within all the target Dairy-LUC combinations, and all the Irrigted Sheep and Beef-LUC combinations.
 By Special request from Horizons.
 ****Don't run this unless you specifically need it!!****
 ```{r}
@@ -914,11 +918,11 @@ writeData(Out, sheet = "Diffuse Inputs", x = DiffuseInputsSiteExtendedTable[,c("
 
 saveWorkbook(Out, file.path(DataDirectory,"CASM-Inputs.xlsx"), overwrite = T)
 ```
- By way of a check, it will be helpful to compare the total sub-management zone loads from the griddeed leachrate data with the total sub-management zone loads from the zone/landuse/LUC data.
+ By way of a check, it will be helpful to compare the total sub-management zone loads from the gridded leachrate data with the total sub-management zone loads from the zone/landuse/LUC data.
  Start with the leach rate raster data, and get the average leachrate for each zone and multiply by the area.
  Note that  I need to use the subzones from the SubZone
  
- Then, as a check, get the load for each zone-landuse-LUC combination, and sum a in each zone
+ Then, as a check, get the load for each zone-landuse-LUC combination, and sum in each zone
 ```{r}
 #Note that to ensure I am comparing apples with apples, I am using the SubZoneLandUseLUCSpatial data to find the SubZone areas (rather than using the pre-prepared cleaned sub zone spatial data which has been "cleaned" so is slightly different in area!!)
 test <- unionSpatialPolygons(SubZoneLanduseLUCSpatial,IDs = SubZoneLanduseLUCSpatial@data$Zone_Code )
