@@ -267,6 +267,22 @@ ReachLabeler <- function(NetworkLabels=NetworkLabelList,OutletReachNamesLookUpTa
 
 I also need a function to generate leaching rates based on PAW, irrigated land, irrigable land, climate and landuse data.
 ```{r}
+#' A function to combine spatial data sources of climate, land use, irrigation and soil properties, and uses them to lookup leach rates based on a Ministry of Primary Industries designation. The processing is carried out at a 250 m x 250 m grid scale.
+#'
+#'This function generates a raster object of leach rates 
+#'
+#'@param ClimateData A spatial data file (in ESRI polygon shapefile format) of the climate regions, as used by the MPI lookup table. Unknown origins.
+#'@param LanduseData A spatial data file (in ESRI polygon shapefile format) of the land use, as used by Horizons. Unknown origins.
+#'@param IrrigatedLandData A spatial data file (in ESRI polygon shapefile format) of the irrigated land, as used by the MPI lookup table. A "1" represents irrigated. Originally sourced from the  \href{https://data.mfe.govt.nz/layer/90838-irrigated-land-area-2017/} \href{https://niwa.co.nz/freshwater-and-estuaries/management-tools/river-environment-classification-0}{MFE data portal}
+#'@param IrrigableLandData A spatial data file (in ESRI polygon shapefile format) of land that is irrigable, as used by the MPI lookup table. A "1" represents irrigable. This is based on slope and elevation, but the exact source and details of preparation are unknown.
+#'@param PAWData A spatial data file (in ESRI polygon shapefile format) of the plant available water (also known as profile available water), as used by the MPI lookup table. Originally sourced from the Fundamental Soils Layer data available from the \href{https://lris.scinfo.org.nz/layer/48100-fsl-profile-available-water/}{Landcare - Manaaki Whenua data portal}
+#'@param MPILeachRateData A csv file with the first 5 columns (names are not important) providing, in order: "Climate";"Landuse";"Plant Available Water depth";"Irrigable Land";"Irrigated Land". A  sixth column labelled "N_loss" must also be present.
+#'@param LanduseToLanduseLUT A csv file with two columns, one designated as "MPIClassNo" with the Ministry for Primary Industries land use classes, as used in the MPILeachRateDatalookup table. The other column designated "Horizons_Landuse_Name" with the land use names as provided in the LanduseData spatial data file.
+
+#'@author Tim Kerr, \email{Tim.Kerr@@Rainfall.NZ}
+#'@return A dataframe of reach numbers ("nzsgmnt") and tributary labels ("Label")
+#'@keywords REC River Environment Classification CASM
+#'@export
 LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,ClimateShapeFileName),
                                    LanduseData=file.path(GISDataDirectory,SubZoneLanduseLUCShapeFileName),
                                    IrrigatedLandData=file.path(GISDataDirectory,IrrigatedLandShapeFileName),
@@ -302,8 +318,6 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
                                        LanduseToLanduseLookUpTable$MPIClassNo[match(SubZoneLanduseLUCSpatial@data$RegiScLand,
                                                                                     LanduseToLanduseLookUpTable$Horizons_Landuse_Name)]
                                      LanduseRaster <- rasterize(SubZoneLanduseLUCSpatial,RasterBase,"MPILanduseCode")
-                                     
-
                                      
                                      #Load Irrigable land spatial data
                                      IrrigableLandSpatial <- readOGR(IrrigableLandData,stringsAsFactors = FALSE)
@@ -384,6 +398,9 @@ DiffuseLoadTableCreator <- function(ZoneLanduseLUCPolygons=SubZoneLanduseLUCSpat
                                      levels(ZoneLanduseLUCRaster) <- data.frame(ID=seq(1:3887),CombinedClassName=levels(ZoneLanduseLUCPolygons$CombinedClassNameFactor))
                                      #Save a copy for later
                                      writeRaster(ZoneLanduseLUCRaster,file.path(GISDataDirectory,ZoneLanduseLUCRasterFileName),overwrite=TRUE)
+                                     browser()
+                                     #And save a levels-to-class name look up table
+                                     write.table(levels(ZoneLanduseLUCRaster),file.path(DataDirectory,"ZoneLanduseLUCCode-To-ClassLUT.csv"),sep=",",quote=FALSE, row.names=FALSE)
                                      
                                      #Now I can get all the leach rate values for all grid cells, and all the combined class names for all the cells
                                      RasterData <- data.frame(LeachRates = values(LeachRates), CombinedClassNameLevel = values(ZoneLanduseLUCRaster))
@@ -562,7 +579,7 @@ By Special request from Horizons.
 
 load data
 ```{r}
-#REC data has been soured from the NIWA website. It has cut down versions of the attribute names, e.g. nzsegment is nzsgmnt. Keep an eye on this when comparing to other data sources that may have the full RECV2 attribute names.
+#REC data has been sourced from the NIWA website. It has cut down versions of the attribute names, e.g. nzsegment is nzsgmnt. Keep an eye on this when comparing to other data sources that may have the full RECV2 attribute names.
 RECReachNetwork <- readOGR(dsn =file.path(GISDataDirectory,REC_rivers),
                            layer = "RECV2-Riverlines-Horizons")
 RECReachNetwork <- spTransform(RECReachNetwork,CRS("+init=epsg:2193") )
@@ -615,17 +632,17 @@ SubZoneLanduseLUCSpatial <- readOGR(file.path(GISDataDirectory,SubZoneLanduseLUC
 SubZoneLanduseLUCSpatial <- spTransform(SubZoneLanduseLUCSpatial,CRS("+init=epsg:2193") )
 
 #Load the leachingrate data if it exists
-#LeachRate <- raster(file.path(GISDataDirectory,LeachRateRasterFileName))
+LeachRate <- raster(file.path(GISDataDirectory,LeachRateRasterFileName))
 
 #**********************************************************
 ##If the leach rate raster file is missing or needs to be re-created then use the following:
 ##Takes 5 minutes at 250 m
 ##Note addition of timing to see how long it takes
-tic()
-LeachRate <- LeachRateRasterCreator()
-toc()
+#tic()
+#LeachRate <- LeachRateRasterCreator()
+#toc()
 #And save it for nexttime
-writeRaster(LeachRate,file.path(GISDataDirectory,LeachRateRasterFileName),overwrite=TRUE)
+#writeRaster(LeachRate,file.path(GISDataDirectory,LeachRateRasterFileName),overwrite=TRUE)
 #******************************************************************
 ```
 I need to analyse each management sub zone to determine how much area (in hectares) each landuse-LUC combination takes up.
@@ -776,12 +793,9 @@ DiffuseInputsSiteExtendedTable <- SubZoneLanduseLUCSpatial@data
 DiffuseInputsSiteExtendedTable[,c("TribLocn","TribName")] <- DiffuseInputsSiteTable[match(SubZoneLanduseLUCSpatial@data$Zone_Code, DiffuseInputsSiteTable$CASMNodeName),c("TribLocn","TribName")]
 
 #Add the leach rates
-#First option uses the leach values that were obtained by sampling the leach rate raster at each polygon
-#DiffuseInputsSiteExtendedTable$"LeachRates" <-round( #leachvalues@data$layer[match(DiffuseInputsSiteExtendedTable$CombinedClassName,leachvalues@data$CombinedClassName)],1)
-
-#Second option uses leach rates that need to be obtained by rasterising the zone-landuse-LUC combinations
 DiffuseLeachRateData <- DiffuseLoadTableCreator(ZoneLanduseLUCPolygons = SubZoneLanduseLUCSpatial,LeachRates = LeachRate)
 DiffuseInputsSiteExtendedTable$"LeachRates"<- DiffuseLeachRateData$LeachRate[match(DiffuseInputsSiteExtendedTable$CombinedClassName,DiffuseLeachRateData$CombinedClassName)]
+
 #Need to use raster-calculated area rather than polygon areas
 DiffuseInputsSiteExtendedTable$`RasterBased Land Area (ha)` <- DiffuseLeachRateData$Hectares[match(DiffuseInputsSiteExtendedTable$CombinedClassName,DiffuseLeachRateData$CombinedClassName)]
 #Remove all the surplus combined names. The raster version has much less.
