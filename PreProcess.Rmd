@@ -922,7 +922,8 @@ saveWorkbook(Out, file.path(DataDirectory,"CASM-Inputs.xlsx"), overwrite = T)
  Start with the leach rate raster data, and get the average leachrate for each zone and multiply by the area.
  Note that  I need to use the subzones from the SubZone
  
- Then, as a check, get the load for each zone-landuse-LUC combination, and sum in each zone
+ Then, as a check, get the load for each zone-landuse-LUC combination, and sum in each zone.
+ It would also be good to add a check of total load in catchments upstream of a water quality network being more than the total load measured. If they were less, then the attenuation would have to be greater than 1!
 ```{r}
 #Note that to ensure I am comparing apples with apples, I am using the SubZoneLandUseLUCSpatial data to find the SubZone areas (rather than using the pre-prepared cleaned sub zone spatial data which has been "cleaned" so is slightly different in area!!)
 test <- unionSpatialPolygons(SubZoneLanduseLUCSpatial,IDs = SubZoneLanduseLUCSpatial@data$Zone_Code )
