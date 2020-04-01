@@ -377,20 +377,19 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
 
                                    }
 
-#' A function to  rasterize the zone-landuse-LUC data, and associate the leach rate with each zone-landuse-LUC combination to enable finding the average leach rate and area for each combination.
+#' A function to  rasterize the zone-landuse-LUC data.
 #'
-#'This function generates a raster object of leach rates 
+#'This function generates a raster object of the zone-landuse-LUC data, writes a copy to file as a tiff, and writes a csv file of a look up table of the raster values to the combined class names 
 #'
 #'@param ZoneLanduseLUCPolygons A polygon spatial data file of the water management zone - land use - LUC intersection.
-#'@param LeachRates A raster of leach rates. The output from the LeachRateRasterCreator function.
+#'@param LeachRates A raster of leach rates. The output from the LeachRateRasterCreator function. Used to allign the output raster
 #'@author Tim Kerr, \email{Tim.Kerr@@Rainfall.NZ}
-#'@return A data frame of average leach rates for each water management zone-landuse-LUC combination
+#'@return A raster of the zone-landuse-LUC combination
 #'@keywords REC River Environment Classification CASM
 #'@export
 
 
-DiffuseLoadTableCreator <- function(ZoneLanduseLUCPolygons=SubZoneLanduseLUCSpatial,
-                                   LeachRates=LeachRateRaster){
+ZoneLanduseLUCRasterCreator <- function(ZoneLanduseLUCPolygons=SubZoneLanduseLUCSpatial,LeachRates=LeachRateRaster){
   
                                      #Add the combined-class name to the zone-landuse-LUC data
                                      ZoneLanduseLUCPolygons$CombinedClassName <- with(ZoneLanduseLUCPolygons@data,
@@ -402,9 +401,43 @@ DiffuseLoadTableCreator <- function(ZoneLanduseLUCPolygons=SubZoneLanduseLUCSpat
                                      levels(ZoneLanduseLUCRaster) <- data.frame(ID=seq(1:3887),CombinedClassName=levels(ZoneLanduseLUCPolygons$CombinedClassNameFactor))
                                      #Save a copy for later
                                      writeRaster(ZoneLanduseLUCRaster,file.path(GISDataDirectory,ZoneLanduseLUCRasterFileName),overwrite=TRUE)
-                                     browser()
+                                     #browser()
                                      #And save a levels-to-class name look up table
-                                     write.table(levels(ZoneLanduseLUCRaster),file.path(DataDirectory,"ZoneLanduseLUCCode-To-ClassLUT.csv"),sep=",",quote=FALSE, row.names=FALSE)
+                                     write.table(levels(ZoneLanduseLUCRaster),file.path(DataDirectory,ZoneLanduseLUCCode_To_ClassLUTFileName),sep=",",quote=FALSE, row.names=FALSE)
+                                     
+
+                                     return(ZoneLanduseLUCRaster)
+
+}
+
+#' A function to  associate the leach rate with each zone-landuse-LUC combination and find the average leach rate and area for each combination.
+#'
+#'@param ZoneLanduseLUCRaster A raster of the water management zone - land use - LUC intersection.
+#'@param LeachRates A raster of leach rates. The output from the LeachRateRasterCreator function.
+#'@author Tim Kerr, \email{Tim.Kerr@@Rainfall.NZ}
+#'@return A data frame of average leach rates for each water management zone-landuse-LUC combination
+#'@keywords REC River Environment Classification CASM
+#'@export
+
+
+#DiffuseLoadTableCreator <- function(ZoneLanduseLUCPolygons=SubZoneLanduseLUCSpatial,
+#                                   LeachRates=LeachRateRaster){
+DiffuseLoadTableCreator <- function(ZoneLanduseLUCRaster=ZoneLanduseLUCRaster,
+                                   LeachRates=LeachRateRaster){
+  
+                                     # #Add the combined-class name to the zone-landuse-LUC data
+                                     # ZoneLanduseLUCPolygons$CombinedClassName <- with(ZoneLanduseLUCPolygons@data,
+                                     #                                                    paste0(Zone_Code,"-",RegiScLand,"-",LUC_CLASS))
+                                     # #Convert the combined name into levels
+                                     # ZoneLanduseLUCPolygons$CombinedClassNameFactor <- as.factor(ZoneLanduseLUCPolygons$CombinedClassName)
+                                     # #Create the raster, and allign to the Leach rate raster
+                                     # ZoneLanduseLUCRaster <- rasterize(ZoneLanduseLUCPolygons,LeachRates,"CombinedClassNameFactor")
+                                     # levels(ZoneLanduseLUCRaster) <- data.frame(ID=seq(1:3887),CombinedClassName=levels(ZoneLanduseLUCPolygons$CombinedClassNameFactor))
+                                     # #Save a copy for later
+                                     # writeRaster(ZoneLanduseLUCRaster,file.path(GISDataDirectory,ZoneLanduseLUCRasterFileName),overwrite=TRUE)
+                                     # browser()
+                                     # #And save a levels-to-class name look up table
+                                     # write.table(levels(ZoneLanduseLUCRaster),file.path(DataDirectory,ZoneLanduseLUCCode_To_ClassLUTFileName),sep=",",quote=FALSE, row.names=FALSE)
                                      
                                      #Now I can get all the leach rate values for all grid cells, and all the combined class names for all the cells
                                      RasterData <- data.frame(LeachRates = values(LeachRates), CombinedClassNameLevel = values(ZoneLanduseLUCRaster))
@@ -423,12 +456,52 @@ DiffuseLoadTableCreator <- function(ZoneLanduseLUCPolygons=SubZoneLanduseLUCSpat
 }
 ```
 
+Create scenario leach rate rasters from Horizon's Plan change 2 Table 14.2, from the raster of the Sub-management Zone-Land Use-LUC (and the look up table which converts the class numbers to descriptions), and the "current" MPI-based leach rate raster
+```{r}
+ScenarioLeachRateRaster <- function(CurrentLeachRateRaster = LeachRate, LUC_To_Leach_Table = LeachRateLimits, ZoneLanduseLUCRasterFile = ZoneLanduseLUCRasterFileName, ZoneLanduseLUCCode_To_ClassLUTFile = ZoneLanduseLUCCode_To_ClassLUTFileName, plan = "PC2", year = 20) {
+  
+  #Load the ZoneLanduseLUC raster and the look up table that relates the raster's codes to a combined-class name
+  ZoneLanduseLUCRaster <- raster(file.path(GISDataDirectory,ZoneLanduseLUCRasterFile))
+  ZoneLanduseLUC_LUT <- read.table(file.path(DataDirectory,ZoneLanduseLUCCode_To_ClassLUTFile),sep=",",header=TRUE)
+  
+  #Parse the Combined name into its constituent parts
+  ZoneLanduseLUC_LUT$Zone <- as.factor(sub('-.*','',ZoneLanduseLUC_LUT$CombinedClassName))
+  ZoneLanduseLUC_LUT$ZoneNo <- as.numeric(ZoneLanduseLUC_LUT$Zone)
+  ZoneLanduseLUC_LUT$Landuse <- as.factor(sub('.*-(.*)-.*','\\1',ZoneLanduseLUC_LUT$CombinedClassName))
+  ZoneLanduseLUC_LUT$LanduseNo <- as.numeric(ZoneLanduseLUC_LUT$Landuse)                                         
+  ZoneLanduseLUC_LUT$LUC <- as.numeric(sub('.*-','',ZoneLanduseLUC_LUT$CombinedClassName))
+
+  #reclasify ZoneLanduSeLUCRaster based on levels to the constituent parts
+  LandUseRaster <- reclassify(ZoneLanduseLUCRaster,as.matrix(ZoneLanduseLUC_LUT[,c('ID','LanduseNo')]))
+  SMZRaster <- reclassify(ZoneLanduseLUCRaster,as.matrix(ZoneLanduseLUC_LUT[,c('ID','ZoneNo')]))
+  LUCRaster <- reclassify(ZoneLanduseLUCRaster,as.matrix(ZoneLanduseLUC_LUT[,c('ID','LUC')]))
+  
+  #Reclasify to Table 14.2 leach rates as though they applied everywhere
+  LeachRateLUT <- matrix(ncol=2,c(1:8,t(LUC_To_Leach_Table[LUC_To_Leach_Table$Year == year & LUC_To_Leach_Table$Plan == plan,c(3:10)])))
+  AreaWideScenarioLeachRates <- reclassify(LUCRaster, LeachRateLUT)
+
+  #Turn the ZoneLanduseLUCRaster into an "intensive farming" mask, based on rules as to what constitutes intensive farming
+  IntensiveFarmingMask <- !LandUseRaster %in% which(levels(ZoneLanduseLUC_LUT$Landuse) %in% c("Native Cover","Water Body"))
+  
+  #For the intensive farming areas find the Scenario leach rates, otherwise, keep using the MPI leach rates
+  ScenarioLeachRate <- AreaWideScenarioLeachRates * IntensiveFarmingMask + CurrentLeachRateRaster * !IntensiveFarmingMask
+  
+  
+  #Export a raster stock for exploration in QGIS
+  ScenarioRasters <- raster::stack(x=list(Scenario=ScenarioLeachRate,ScenarioAll=AreaWideScenarioLeachRates,Mask=IntensiveFarmingMask,MPI=CurrentLeachRateRaster,LUC=LUCRaster,Landuse=LandUseRaster))
+  writeRaster(ScenarioRasters,file.path(GISDataDirectory,"ScenarioLeachRasters.tif"),overwrite=TRUE)
+  
+  
+  return(ScenarioLeachRate)
+  }
+```
 
 Set directories and data file names
 ```{r}
 #Set the project directory
 #ProjectDirectory <- "C:\\Users\\Owner\\Documents\\Projects\\LWP\\Horizons"   #Tim Kerr's home Windows Desktop
-ProjectDirectory <- "/home/tim/Desktop/Documents/Projects/LWP/Horizons"       #Tim Kerr's Ubuntu laptop
+#ProjectDirectory <- "/home/tim/Desktop/Documents/Projects/LWP/Horizons"       #Tim Kerr's Ubuntu laptop
+ProjectDirectory <- "D:\\Projects\\LWP\\Horizons"       #Tim Kerr's Windows Home laptop
 
 #Set the data directory
 DataDirectory     <- file.path(ProjectDirectory, "Data")
@@ -470,7 +543,11 @@ LeachRateRasterFileName <- "LeachRateRaster 250x250.tif"
 
 ZoneLanduseLUCRasterFileName <- "ZoneLanduseLUCRaster 250 x 250.tif"
 
+ZoneLanduseLUCCode_To_ClassLUTFileName <- "ZoneLanduseLUCCode_T_ClassLUT.csv"
+
 TargetZonesFileName <- "Target_subzones"
+
+LeachRateLimitsFileName              <- "Table14_2.csv"
 ```
 
 Find the total area of each Climate-PAW class within all the target Dairy-LUC combinations, and all the Irrigted Sheep and Beef-LUC combinations.
@@ -610,6 +687,8 @@ MeasurementSitesSpatial <-SpatialPointsDataFrame(coords = MeasurementSites[,c("N
                                                data = MeasurementSites[,1:13],
                                                proj4string = CRS("+init=epsg:2193"))
 
+#Load the leach rate maximums set out by Horizons in their plan, and ammended in their proposed plan change 2. This includes a 4 stepped change for year's 1, 5,10 and 20
+LeachRateLimits <- read.table(file.path(DataDirectory,LeachRateLimitsFileName), sep=",", header=TRUE)
 
 
 #Load the point sources of nitrogen, previously prepared by Caroline Fraser. Unfortunately they don't have nzsgmnt data. notethat an erro was found for the NZTM.X position of the Fonterra at Pahiatua site. Originally it was 1859554.9 but it should be 1839554.9. This has been corrected on the LWP sharepoint version of the 20200201_HorizonsRiverCriteria.xlsx file, and the Tim Kerr version of the PointSourcesSummaryPC2_YE2012_04.csv file.
@@ -635,15 +714,30 @@ OutletReachNames <- read.csv(file.path(DataDirectory,OutletReachNamesFile), stri
 SubZoneLanduseLUCSpatial <- readOGR(file.path(GISDataDirectory,SubZoneLanduseLUCShapeFileName))
 SubZoneLanduseLUCSpatial <- spTransform(SubZoneLanduseLUCSpatial,CRS("+init=epsg:2193") )
 
+
+
 #Load the leachingrate data if it exists
 LeachRate <- raster(file.path(GISDataDirectory,LeachRateRasterFileName))
 
 #**********************************************************
-##If the leach rate raster file is missing or needs to be re-created then use the following:
+#If the leach rate raster file is missing or needs to be re-created then use the following:
+#Takes 5 minutes at 250 m
+#Note addition of timing to see how long it takes
+tic()
+LeachRate <- LeachRateRasterCreator()
+toc()
+#And save it for nexttime
+writeRaster(LeachRate,file.path(GISDataDirectory,LeachRateRasterFileName),overwrite=TRUE)
+#******************************************************************
+
+#Load the ZoneLanduseLUC raster if it exists
+ZoneLanduseLUCRaster <- raster(file.path(GISDataDirectory,ZoneLanduseLUCRasterFileName))
+#**********************************************************
+##If the ZoneLanduseLUCRaster raster file is missing or needs to be re-created then use the following:
 ##Takes 5 minutes at 250 m
 ##Note addition of timing to see how long it takes
 #tic()
-#LeachRate <- LeachRateRasterCreator()
+#ZoneLanduseLUCRaster <- ZoneLanduseLUCRasterCreator(ZoneLanduseLUCPolygons = ZoneLanduseLUCPolygons,LeachRates = LeachRate)
 #toc()
 #And save it for nexttime
 #writeRaster(LeachRate,file.path(GISDataDirectory,LeachRateRasterFileName),overwrite=TRUE)
@@ -797,7 +891,7 @@ DiffuseInputsSiteExtendedTable <- SubZoneLanduseLUCSpatial@data
 DiffuseInputsSiteExtendedTable[,c("TribLocn","TribName")] <- DiffuseInputsSiteTable[match(SubZoneLanduseLUCSpatial@data$Zone_Code, DiffuseInputsSiteTable$CASMNodeName),c("TribLocn","TribName")]
 
 #Add the leach rates
-DiffuseLeachRateData <- DiffuseLoadTableCreator(ZoneLanduseLUCPolygons = SubZoneLanduseLUCSpatial,LeachRates = LeachRate)
+DiffuseLeachRateData <- DiffuseLoadTableCreator(ZoneLanduseLUCRaster = ,LeachRates = LeachRate)
 DiffuseInputsSiteExtendedTable$"LeachRates"<- DiffuseLeachRateData$LeachRate[match(DiffuseInputsSiteExtendedTable$CombinedClassName,DiffuseLeachRateData$CombinedClassName)]
 
 #Need to use raster-calculated area rather than polygon areas
