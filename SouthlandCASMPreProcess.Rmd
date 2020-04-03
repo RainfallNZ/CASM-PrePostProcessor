@@ -34,7 +34,15 @@ REC_MeanFlowFile <- file.path(DataDirectory,"REC2MeanFlow.RData")  #This is an R
 
 #OutletReachNamesFile <- "OutletReachNames.csv"
 
-WaterQualityStationFile <- "WaterQualitySites"
+WaterQualityStationFile <- "WaterQualitySites" #An ESRI Point shape file
+
+LakeSiteFile <- "LakeSites"  #An ESRI Point shape file
+
+EstuarySiteFile <- "Estuaries.csv"
+
+ExtraCASMNodeSiteFile <- "ExtraCASMNodes"  #An ESRI Point Shape File
+
+MajorCatchmentsFile <- "FactsheetZoneAreas"   #An ESRI polygon shapefile
 
 ```
 
@@ -62,6 +70,34 @@ MeasurementSites <- spTransform(MeasurementSites,CRS("+init=epsg:2193") )
 #make sure the nzsegment attribute is numeric
 MeasurementSites$nzsegment <- as.numeric(MeasurementSites$nzsegment)
 
+#Load lake sites of interest
+LakeSites <- readOGR(dsn =file.path(GISDataDirectory),
+                           layer = LakeSiteFile, stringsAsFactors = FALSE)
+LakeSites <- spTransform(LakeSites,CRS("+init=epsg:2193") )
+
+#make sure the nzsegment attribute is numeric
+LakeSites$nzsegment <- as.numeric(LakeSites$nzsegment)
+
+#Load the additional subjective site locations
+ExtraSites <- readOGR(dsn =file.path(GISDataDirectory,ExtraCASMNodeSiteFile),
+                           layer = ExtraCASMNodeSiteFile, stringsAsFactors = FALSE)
+ExtraSites <- spTransform(ExtraSites,CRS("+init=epsg:2193") )
+
+
+#Load the estuary site data
+EstuarySites <- read.table(file.path(DataDirectory,EstuarySiteFile),header=TRUE,stringsAsFactors = FALSE, sep=",")
+#Create a spatial file from it
+EstuarySitesSpatial <- SpatialPointsDataFrame(coords = EstuarySites[,c("NZTME","NZTMN")],data = EstuarySites, proj4string = CRS("+init=epsg:2193"))
+
+#Load the major catchments
+MajorCatchments <- readOGR(dsn =file.path(GISDataDirectory),
+                           layer = MajorCatchmentsFile, stringsAsFactors = FALSE)
+MajorCatchments <- spTransform(MajorCatchments,CRS("+init=epsg:2193") )
+#Ditch Fiordland and Stewart Island
+MajorCatchments <- MajorCatchments[-which(MajorCatchments$FactSheetZ %in% c("Fiordland","Stewart Island/ Rakiura Zone","Coastal Islands")),]
+#Ditch the NA catchemnts
+MajorCatchments <- MajorCatchments[!is.na(MajorCatchments$FactSheetZ),]
+
 #Load the point source sites
 #PointSourceSites <- read.csv(file.path(DataDirectory,"PointSourcesSummaryPC2_YE2012_04.csv"))
 
@@ -76,28 +112,28 @@ MeasurementSites$nzsegment <- as.numeric(MeasurementSites$nzsegment)
 
 ```
 
-Get the "nzsgmnt" attributes of the lowest reach in each of the management zones
+Get the "nzsegment" attributes of the lowest reach in each of the major catchments
 ```{r}
-SubZoneOfEachReach <- RECReachNetwork %over% SubZonePolygons #Note this takes about a minute to do
-RECReachNetwork$SubZoneCode <- SubZoneOfEachReach$Zone_Code
+CatchmentReaches <- RECReachNetwork %over% MajorCatchments #Note this takes about a minute to do
+RECReachNetwork$Catchment <- CatchmentReaches$FactSheetZ
 
 #Work through each management zone to find the reach with the greatest distance to the headwater (the hdw_dst attribute). . I tried doing this based on the least largest area (the CUM_ARE attribute) but there were some zero values, I also tried distance to the sea (the LENGTHD attribute, but near the coast I was getting small reaches that were not the main river channel, but were closer to the sea)
-ManagementSubZoneOutletReaches <- lapply(seq_along(SubZonePolygons$Zone_Code), function(SingleSubZoneIndex){
-  #browser()
-  CurrentSubZone <- SubZonePolygons$Zone_Code[SingleSubZoneIndex]
-  CurrentSubZoneReaches <- RECReachNetwork[RECReachNetwork$SubZoneCode == CurrentSubZone,]
-  OutletReach <- CurrentSubZoneReaches$nzsgmnt[which.max(CurrentSubZoneReaches$hdw_dst)]
-  return(data.frame(SubZone = CurrentSubZone,nzsgmnt = OutletReach))
+MajorCatchmentOuteltReaches <- lapply(seq_along(MajorCatchments$FactSheetZ), function(SingleCatchment){
+  browser()
+  CurrentCatchment <- MajorCatchments$FactSheetZ[SingleCatchment]
+  CurrentCatchmentReaches <- RECReachNetwork[RECReachNetwork$Catchment == CurrentCatchment,]
+  OutletReach <- CurrentCatchmentReaches$nzsegment[which.max(CurrentCatchmentReaches$headw_dist)]
+  return(data.frame(Catchment = CurrentCatchment,nzsegment = OutletReach))
 })
 #Convert the list into a dataframe
-ManagementSubZoneOutletReachesDF <- do.call(rbind,ManagementSubZoneOutletReaches)
+MajorCatchmentOuteltReachesDF <- do.call(rbind,MajorCatchmentOuteltReaches)
 ```
 
 
 From the load sites, point source sites, and water management subzones outlets, create the required network
 ```{r}
-#AllPoints <- c(MeasurementSites$nzsegment, PointSourceSites$nzsegment, ManagementSubZoneOutletReachesDF$nzsgmnt)
-AllPoints <- c(MeasurementSites$nzsegment)
+#AllPoints <- c(MeasurementSites$nzsegment, PointSourceSites$nzsegment, MajorCatchmentOuteltReachesDF$nzsgmnt)
+AllPoints <- c(MeasurementSites$nzsegment, LakeSites$nzsegment, EstuarySites$nzsegment, ExtraSites$nzsegment, OutletReaches = MajorCatchmentOuteltReachesDF$nzsgmnt)
 LoadNetwork <- lapply(AllPoints, function(x) {DownstreamReachFinder(RECNetwork = RECReachNetwork, SourceReach = x)} )
 CompleteNetwork <- unlist(LoadNetwork)
 CompleteNetwork <- CompleteNetwork[!duplicated(CompleteNetwork)]
@@ -208,71 +244,55 @@ names(DiffuseInputsSiteExtendedTable) <- c("Landuse","LUC","Zone_Code","Polygon 
 ```
 
 
-Create a plot
-```{r}
-# plot(SubZonePolygons, col = "transparent")
-# plot(CompleteSpatialNetwork, col = "blue", add=TRUE)
-# plot(PointSourceSitesSpatial, add=TRUE, col = "red")
-#plot(MeasurementSitesSpatial, add=TRUE, col = "black")
-```
-Or another plot
-```{r}
-# #Put all the spatial data in a list for simplicity
-# SpatialData <- list(MeasurementSites=MeasurementSitesSpatial, PointSourceSites=PointSourceSitesSpatial,
-#                     SubZones=SubZonePolygons,RiverNetwork=CompleteSpatialNetwork)
-# #Get the extents of the area in lat lon
-# MapExtentLatLon <- extent(projectExtent(SubZonePolygons, crs('+init=epsg:4326')))
-# #Expand the extents to provide extents for the topographical map to download
-# MapExtents <- MapExtentLatLon + 0.005
-# LINZAPIToken <- "85df745fa5d446fea241dd5ae40add85"
-# #And use those extents to get the Topo250 data. Note that I seem to need to download the data first, then load it into R.
-# download.file(paste0("https://data.linz.govt.nz/services;key=",LINZAPIToken,"/wms?service=WMS&version=1.1.1&request=GetMap&layers=layer-50798&format=image/geotiff&width=1456&height=1600&bbox=",MapExtents@xmin,",",MapExtents@ymin,",",MapExtents@xmax,",",MapExtents@ymax),destfile <- file.path(GISDataDirectory,"TopoNZ.tif"))
-# Topo250Map <- stack(file.path(GISDataDirectory,"TopoNZ.tif"))
-# #Need to set NA values to 0
-# values(Topo250Map)[is.na(values(Topo250Map))] <- 0
-# 
-# #Reproject the other spatial data to the maps projection ready for plotting
-# reprojected.data <- lapply(SpatialData, spTransform,Topo250Map@crs)
-# list2env(reprojected.data,env=.GlobalEnv)
-# 
-# {
-# plotRGB(Topo250Map,colNA="white")
-# plot(SubZones, add=TRUE)
-# points(MeasurementSites,pch=20)
-# points(PointSourceSites, pch = 8, col = "dark green")
-# lines(RiverNetwork, col = "blue")
-# legend("topleft",bty="n",legend=c("SubZones","Measurement \nSites","Point Source Sites","River \nNetwork"),pch=c(0,20,8,NA),pt.cex=c(1.3,1,1,NA),merge=TRUE,lty=c(-1,-1,-1,1),col=c("black","black","dark green","blue"))
-# north.arrow(xb=par("usr")[1] + 0.0015,yb=par("usr")[3]+0.0009, len = 0.0002)
-# map.scale(xc=par("usr")[1] + 0.0015,yc=-42.89077,len=1/(1110.91/2.5), units= "metres", ndivs=1, subdiv = 250)
-# }
-# 
-# #Generate a plot file
-# dev.copy(png,file=file.path(DataDirectory,
-#                             "OverviewMap.png")
-#          ,width=19,height=28,units="cm",res=600,family="Arial",pointsize=8)
-#invisible(dev.off())
-```
-Or another plot
+plot it
 ```{r}
 #Reproject the other spatial data to the maps projection ready for plotting
 #SpatialData <- list(MeasurementSites=MeasurementSitesSpatial, PointSourceSites=PointSourceSitesSpatial,
 #                    SubZones=SubZonePolygons,RiverNetwork=CompleteSpatialNetwork)
-SpatialData <- list(MeasurementSites=MeasurementSites,RiverNetwork=CompleteSpatialNetwork)
+SpatialData <- list(MeasurementSites=MeasurementSites,LakeSites=LakeSites,EstuarySites=EstuarySitesSpatial,ExtraSites=ExtraSites, RiverNetwork=CompleteSpatialNetwork,MajorCatchments=MajorCatchments)
 reprojected.data.WGS84 <- lapply(SpatialData, spTransform,CRS("+init=epsg:4326"))
+
+
+
+MeasurementSiteLabels <- lapply(seq(nrow(reprojected.data.WGS84$MeasurementSites@data)), function(i) {
+  paste0("Measurement site:", '</br>', 
+          reprojected.data.WGS84$MeasurementSites@data[i, "sitename"]) 
+})
+
+EstuarySiteLabels <- lapply(seq(nrow(reprojected.data.WGS84$EstuarySites@data)), function(i) {
+  paste0("Estuary site:", '</br>', 
+          reprojected.data.WGS84$EstuarySites@data[i, "Name"]) 
+})
+
+LakeSiteLabels <- lapply(seq(nrow(reprojected.data.WGS84$LakeSites@data)), function(i) {
+  paste0("Lake site:", '</br>', 
+          reprojected.data.WGS84$LakeSites@data[i, "Lake_Name"]) 
+})
+
+ExtraSiteLabels <- lapply(seq(nrow(reprojected.data.WGS84$ExtraSites@data)), function(i) {
+  paste0("Extra site: ",  
+          reprojected.data.WGS84$ExtraSites@data[i, "id"],'</br>',reprojected.data.WGS84$ExtraSites@data[i, "Reason"]) 
+})
 
 
 map <- leaflet::leaflet() %>% 
   leaflet::addProviderTiles(providers$OpenStreetMap) %>%
-  setView(lng=168,lat=-46.0,zoom=8) %>% 
+  setView(lng=168,lat=-46.0,zoom=9) %>% 
   #addPolygons(data = reprojected.data.WGS84$SubZones, color = "black", weight = 3, fillColor = "transparent", label = ~htmlEscape(Zone_Code)) %>%
-  addCircleMarkers(data = reprojected.data.WGS84$MeasurementSites, color = "red",label = ~htmlEscape(sID)) %>%
-  #addCircleMarkers(data = reprojected.data.WGS84$PointSourceSites, color = "black", label = ~htmlEscape(Site.Name)) %>%
-  #addPolylines(data = reprojected.data.WGS84$RiverNetwork, color= "blue", label = ~htmlEscape(PrefixedLabel))
-  addPolylines(data = reprojected.data.WGS84$RiverNetwork, color= "blue", label = ~htmlEscape(nzsegment))
+  addCircleMarkers(data = reprojected.data.WGS84$MeasurementSites, color = "#FF3333",fillOpacity = 0.5, label = lapply(MeasurementSiteLabels, htmltools::HTML)) %>%
+  addCircleMarkers(data = reprojected.data.WGS84$LakeSites, color = "darkorange", fillOpacity = 0.5, label = lapply(LakeSiteLabels, htmltools::HTML)) %>%
+  addCircleMarkers(data = reprojected.data.WGS84$EstuarySites, color = "turquoise", fillOpacity = 0.5,label = lapply(EstuarySiteLabels, htmltools::HTML)) %>%
+  addCircleMarkers(data = reprojected.data.WGS84$ExtraSites, color = "#0066CC", fillOpacity = 0.5,label = lapply(ExtraSiteLabels, htmltools::HTML)) %>%
+  addPolylines(data = reprojected.data.WGS84$MajorCatchments, color= "black", label = ~htmlEscape(FactSheetZ)) %>%
+  addPolylines(data = reprojected.data.WGS84$RiverNetwork, color= "blue", label = ~htmlEscape(nzsegment)) %>%
+  addLegend("topright", colors = c("#FF3333","darkorange","turquoise","#0066CC"), labels = c("Measurement SItes","Lake Sites","Estuary Sites","Major subcatchments"),
+            title = "Sites",
+            opacity = 1)
+
 map
 
 #save the mapdata as an R file so that it can be used in an RShinyApp
-saveRDS(reprojected.data.WGS84,file.path(ProjectDirectory,"R/CASM-PrePostProcessor/ShinyApp/Data","SpatialData.RDS"))
+saveRDS(reprojected.data.WGS84,file.path(ProjectDirectory,"/ShinyApp/Data","SpatialData.RDS"))
 ```
 
 
@@ -335,4 +355,50 @@ print(charlie)
 ```
  
 
+```{r}
+# NOT RUN {
+# !formatR
+library(leaflet)
+# a manual legend
+leaflet() %>% addTiles() %>% addLegend(
+  position = "bottomright",
+  colors = rgb(t(col2rgb(palette())) / 255),
+  labels = palette(), opacity = 1,
+  title = "An Obvious Legend"
+)
+
+# }
+# NOT RUN {
+# an automatic legend derived from the color palette
+df <- local({
+  n <- 300; x <- rnorm(n); y <- rnorm(n)
+  z <- sqrt(x ^ 2 + y ^ 2); z[sample(n, 10)] <- NA
+  data.frame(x, y, z)
+})
+pal <- colorNumeric("OrRd", df$z)
+leaflet(df) %>%
+  addTiles() %>%
+  addCircleMarkers(~x, ~y, color = ~pal(z), group = "circles") %>%
+  addLegend(pal = pal, values = ~z, group = "circles", position = "bottomleft") %>%
+  addLayersControl(overlayGroups = c("circles"))
+
+# format legend labels
+df <- data.frame(x = rnorm(100), y = rexp(100, 2), z = runif(100))
+pal <- colorBin("PuOr", df$z, bins = c(0, .1, .4, .9, 1))
+leaflet(df) %>%
+  addTiles() %>%
+  addCircleMarkers(~x, ~y, color = ~pal(z), group = "circles") %>%
+  addLegend(pal = pal, values = ~z, group = "circles", position = "bottomleft") %>%
+  addLayersControl(overlayGroups = c("circles"))
+
+leaflet(df) %>%
+  addTiles() %>%
+  addCircleMarkers(~x, ~y, color = ~pal(z), group = "circles") %>%
+  addLegend(pal = pal, values = ~z, labFormat = labelFormat(
+    prefix = "(", suffix = ")%", between = ", ",
+    transform = function(x) 100 * x
+  ),  group = "circles", position = "bottomleft" ) %>%
+  addLayersControl(overlayGroups = c("circles"))
+# }
+```
 
