@@ -9,7 +9,7 @@ Load libraries
 
 Some functions
 ```{r}
-source(CASM_PrePostProcessorFunctions.R)
+
 
 #Create scenario leach rate rasters from Horizon's Plan change 2 Table 14.2, from the raster of the Sub-management Zone-Land Use-LUC (and the look up table which #converts the class numbers to descriptions), and the "current" MPI-based leach rate raster
 
@@ -86,6 +86,8 @@ PAWShapeFileName <- "niFSL_fixedgeom/FSL_Horizons.shp"
 
 ClimateShapeFileName <- "ClimateRegions/ClimateRegions-Horizon.shp"
 
+CASMModelDomainFileName <- "CASMModelDomains/CASMModelDomains.shp"
+
 MPILeachRateLUTFile <- "MPI_Baseline_N_losses_v7.csv"
 
 MPIClassNameLUTFile <- "MPI_LookupNamesNLosses_v5.csv"
@@ -103,6 +105,8 @@ ZoneLanduseLUCCode_To_ClassLUTFileName <- "ZoneLanduseLUCCode_T_ClassLUT.csv"
 TargetZonesFileName <- "Target_subzones"
 
 LeachRateLimitsFileName              <- "Table14_2.csv"
+
+source(file.path(ProjectDirectory,"R/CASM-PrePostProcessor/CASM_PrePostProcessorFunctions.R"))
 ```
 
 Find the total area of each Climate-PAW class within all the target Dairy-LUC combinations, and all the Irrigted Sheep and Beef-LUC combinations.
@@ -226,6 +230,11 @@ RECReachNetwork <- spTransform(RECReachNetwork,CRS("+init=epsg:2193") )
 #Load the mean flow data for the REC V2. This is provided in an rdata file which contains the data frame REC2MeanFlow, with three columns, "nzsegment","QMean", and "us_catarea"
 load(file.path(DataDirectory, REC_MeanFlowFile))
 
+#Load the CASM Model Domains spatial file
+CASMModelDomains <- readOGR(file.path(GISDataDirectory,CASMModelDomainFileName), stringsAsFactors = FALSE)
+#Explicitly set projection to NZTM
+CASMModelDomains <- spTransform(CASMModelDomains,CRS("+init=epsg:2193") )
+
 #Load the Horizon total nitorigen load measurement sites, previously prepared by Caroline Fraser and called "HZLoads
 load(file.path(DataDirectory,"N_ExpCoeff_Est_HZ_Feb20.rdata"))
 #Select just the TN sites
@@ -240,23 +249,39 @@ MeasurementSites$load_Lci <- round(MeasurementSites$ExpCoef_Lci_ * MeasurementSi
 MeasurementSitesSpatial <-SpatialPointsDataFrame(coords = MeasurementSites[,c("NZTM.X","NZTM.Y")],
                                                data = MeasurementSites[,1:13],
                                                proj4string = CRS("+init=epsg:2193"))
+#Find which model domain they are in
+MeasurementSitesSpatial@data$CASMDomain <- (MeasurementSitesSpatial %over% CASMModelDomains)$CASMModel
+
+#Save a copy for external use
+writeOGR(MeasurementSitesSpatial,dsn = file.path(GISDataDirectory,"MeasurementSites"),"MeasurementSites",driver='ESRI Shapefile',overwrite_layer = TRUE)
 
 #Load the leach rate maximums set out by Horizons in their plan, and ammended in their proposed plan change 2. This includes a 4 stepped change for year's 1, 5,10 and 20
 LeachRateLimits <- read.table(file.path(DataDirectory,LeachRateLimitsFileName), sep=",", header=TRUE)
 
 
-#Load the point sources of nitrogen, previously prepared by Caroline Fraser. Unfortunately they don't have nzsgmnt data. notethat an erro was found for the NZTM.X position of the Fonterra at Pahiatua site. Originally it was 1859554.9 but it should be 1839554.9. This has been corrected on the LWP sharepoint version of the 20200201_HorizonsRiverCriteria.xlsx file, and the Tim Kerr version of the PointSourcesSummaryPC2_YE2012_04.csv file.
+#Load the point sources of nitrogen, previously prepared by Caroline Fraser. Unfortunately they don't have nzsgmnt data. note that an error was found for the NZTM.X position of the Fonterra at Pahiatua site. Originally it was 1859554.9 but it should be 1839554.9. This has been corrected on the LWP sharepoint version of the 20200201_HorizonsRiverCriteria.xlsx file, and the Tim Kerr version of the PointSourcesSummaryPC2_YE2012_04.csv file.
 PointSourceSites <- read.csv(file.path(DataDirectory,"PointSourcesSummaryPC2_YE2012_04.csv"))
 
 #Create a spatial points object set to NZTM
 PointSourceSitesSpatial <-SpatialPointsDataFrame(coords = PointSourceSites[,c("NZTM.X","NZTM.Y")],
                                                data = PointSourceSites[,1:5],
                                                proj4string = CRS("+init=epsg:2193"))
+#Find which catchment each point is in
+PointSourceSitesSpatial@data$CASMDomain <- (PointSourceSitesSpatial %over% CASMModelDomains)$CASMModel
+
+#Save a copy for external use
+writeOGR(PointSourceSitesSpatial,dsn = file.path(GISDataDirectory,"PointSourceSites"),"PointSourceSites",driver='ESRI Shapefile',overwrite_layer = TRUE)
 
 #Load the subzone polygons
 SubZonePolygons <- readOGR(dsn =file.path(GISDataDirectory,SubZones),
                            layer = SubZones)
 SubZonePolygons <- spTransform(SubZonePolygons,CRS("+init=epsg:2193") )
+
+#Add an attribute showing which model domain a zone is within
+SubZonePolygons@data$CASMDomain <- (SubZonePolygons %over% CASMModelDomains)$CASMModel
+
+#Save a copy for external use
+writeOGR(SubZonePolygons,dsn = file.path(GISDataDirectory,"WaterManagementZonesForMapping"),"WaterManagementZonesForMapping",driver='ESRI Shapefile',overwrite_layer = TRUE)
 
 #Load the network outlet reach names lookup table. This has been manually prepared, and may need editing if the network changes to include outlet reaches not yet included in this file
 OutletReachNames <- read.csv(file.path(DataDirectory,OutletReachNamesFile), stringsAsFactors = FALSE)
@@ -277,11 +302,11 @@ LeachRate <- raster(file.path(GISDataDirectory,LeachRateRasterFileName))
 #If the leach rate raster file is missing or needs to be re-created then use the following:
 #Takes 5 minutes at 250 m
 #Note addition of timing to see how long it takes
-tic()
-LeachRate <- LeachRateRasterCreator()
-toc()
+#tic()
+#LeachRate <- LeachRateRasterCreator()
+#toc()
 #And save it for nexttime
-writeRaster(LeachRate,file.path(GISDataDirectory,LeachRateRasterFileName),overwrite=TRUE)
+#writeRaster(LeachRate,file.path(GISDataDirectory,LeachRateRasterFileName),overwrite=TRUE)
 #******************************************************************
 
 #Load the ZoneLanduseLUC raster if it exists
@@ -366,6 +391,8 @@ CompleteNetwork <- unlist(LoadNetwork)
 CompleteNetwork <- CompleteNetwork[!duplicated(CompleteNetwork)]
 
 CompleteSpatialNetwork <- RECReachNetwork[RECReachNetwork$nzsgmnt %in% CompleteNetwork,]
+
+CompleteSpatialNetwork@data$CASMDomain <- (CompleteSpatialNetwork %over% CASMModelDomains)$CASMModel
 ```
 
 Then create a tributary table ready for CASM
