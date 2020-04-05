@@ -331,10 +331,12 @@ LeachRateRasterCreator <- function(ClimateData=file.path(GISDataDirectory,Climat
   #Create a raster brick with all the parameters needed to determine the MPI leach rate
   TotalRaster <- brick(ClimateRaster,LanduseRaster,PAWRaster,IrrigableRaster,IrrigatedRaster)
   names(TotalRaster) <- c("Climate","Landuse","PAW","Irrigable","Irrigated")
+  #Mask the raster brick to just the Horizons area. This helps clean up the irrigated and irrigable areas, which had never been clipped.
+  TotalRaster <- rasterize(x=SubZoneLanduseLUCSpatial,y=TotalRaster,mask=TRUE)
   
   #Save a copy for later
-  #browser()
   writeRaster(TotalRaster,file.path(GISDataDirectory,PredictorRasterFileName),overwrite=TRUE)
+
   
   # #Ton asked me to find which Horizon's predictor combinations didn't exist in the MPI look up table.
   # #Here is how to do that:

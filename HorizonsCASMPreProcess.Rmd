@@ -31,6 +31,8 @@ ScenarioLeachRateRaster <- function(CurrentLeachRateRaster = LeachRate, LUC_To_L
   SMZRaster <- reclassify(ZoneLanduseLUCRaster,as.matrix(ZoneLanduseLUC_LUT[,c('ID','ZoneNo')]))
   LUCRaster <- reclassify(ZoneLanduseLUCRaster,as.matrix(ZoneLanduseLUC_LUT[,c('ID','LUC')]))
   
+  
+  
   #Reclasify to Table 14.2 leach rates as though they applied everywhere
   LeachRateLUT <- matrix(ncol=2,c(1:8,t(LUC_To_Leach_Table[LUC_To_Leach_Table$Year == year & LUC_To_Leach_Table$Plan == plan,c(3:10)])))
   AreaWideScenarioLeachRates <- reclassify(LUCRaster, LeachRateLUT)
@@ -42,7 +44,7 @@ ScenarioLeachRateRaster <- function(CurrentLeachRateRaster = LeachRate, LUC_To_L
   ScenarioLeachRate <- AreaWideScenarioLeachRates * IntensiveFarmingMask + CurrentLeachRateRaster * !IntensiveFarmingMask
   
   
-  #Export a raster stock for exploration in QGIS
+  #Export a raster stack for exploration in QGIS
   ScenarioRasters <- raster::stack(x=list(Scenario=ScenarioLeachRate,ScenarioAll=AreaWideScenarioLeachRates,Mask=IntensiveFarmingMask,MPI=CurrentLeachRateRaster,LUC=LUCRaster,Landuse=LandUseRaster))
   writeRaster(ScenarioRasters,file.path(GISDataDirectory,"ScenarioLeachRasters.tif"),overwrite=TRUE)
   
@@ -100,7 +102,7 @@ LeachRateRasterFileName <- "LeachRateRaster 250x250.tif"
 
 ZoneLanduseLUCRasterFileName <- "ZoneLanduseLUCRaster 250 x 250.tif"
 
-ZoneLanduseLUCCode_To_ClassLUTFileName <- "ZoneLanduseLUCCode_T_ClassLUT.csv"
+ZoneLanduseLUCCode_To_ClassLUTFileName <- "ZoneLanduseLUCCode_To_ClassLUT.csv"
 
 TargetZonesFileName <- "Target_subzones"
 
@@ -302,11 +304,11 @@ LeachRate <- raster(file.path(GISDataDirectory,LeachRateRasterFileName))
 #If the leach rate raster file is missing or needs to be re-created then use the following:
 #Takes 5 minutes at 250 m
 #Note addition of timing to see how long it takes
-#tic()
-#LeachRate <- LeachRateRasterCreator()
-#toc()
-#And save it for nexttime
-#writeRaster(LeachRate,file.path(GISDataDirectory,LeachRateRasterFileName),overwrite=TRUE)
+# tic()
+# LeachRate <- LeachRateRasterCreator()
+# toc()
+# #And save it for nexttime
+# writeRaster(LeachRate,file.path(GISDataDirectory,LeachRateRasterFileName),overwrite=TRUE)
 #******************************************************************
 
 #Load the ZoneLanduseLUC raster if it exists
