@@ -279,11 +279,12 @@ SubZonePolygons <- readOGR(dsn =file.path(GISDataDirectory,SubZones),
                            layer = SubZones)
 SubZonePolygons <- spTransform(SubZonePolygons,CRS("+init=epsg:2193") )
 
-#Add an attribute showing which model domain a zone is within
-SubZonePolygons@data$CASMDomain <- (SubZonePolygons %over% CASMModelDomains)$CASMModel
-
-#Save a copy for external use
-writeOGR(SubZonePolygons,dsn = file.path(GISDataDirectory,"WaterManagementZonesForMapping"),"WaterManagementZonesForMapping",driver='ESRI Shapefile',overwrite_layer = TRUE)
+# #For mapping purposes it is useful to know which CASM model each zone is within. This is (mostly) done by the following few lines. However, for zones bordering two models, it sometimes selectes the wrong model domain, so this file has been externally manually edited. Be sure that you want to overwrite it!
+# #Add an attribute showing which model domain a zone is within
+# SubZonePolygons@data$CASMDomain <- (SubZonePolygons %over% CASMModelDomains)$CASMModel
+# 
+# #Save a copy for external use
+# writeOGR(SubZonePolygons,dsn = file.path(GISDataDirectory,"WaterManagementZonesForMapping"),"WaterManagementZonesForMapping",driver='ESRI Shapefile',overwrite_layer = FALSE)
 
 #Load the network outlet reach names lookup table. This has been manually prepared, and may need editing if the network changes to include outlet reaches not yet included in this file
 OutletReachNames <- read.csv(file.path(DataDirectory,OutletReachNamesFile), stringsAsFactors = FALSE)

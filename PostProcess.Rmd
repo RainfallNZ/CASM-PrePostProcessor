@@ -1,18 +1,67 @@
 ---
-title: "R Notebook to extract data out of a CASM workbook"
+title: "R Notebook to extract data out of CASM output and generate some files that are useful for reporting"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
-
+Load some libraries
 ```{r}
-plot(cars)
+
 ```
 
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+Set the directories
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+```{r}
+#Set the project directory
+ProjectDirectory <- "D:\\Projects\\LWP\\Horizons"       #Tim Kerr's Windows Home laptop
 
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+#Set the data directory
+DataDirectory     <- file.path(ProjectDirectory, "Data")
+
+#Set the GIS directory
+GISDataDirectory  <- file.path(DataDirectory,"GIS")
+
+
+SubZones <-"WaterManagementZonesForMapping" #prepared during preCASM processing, and alreay has the CASM domain attribute, manually edited!
+
+#SubZoneLanduseLUCShapeFileName <- "ZoneLanduseLUC/ZoneLanduseLUC.shp"
+
+CASMModelDomainFileName <- "CASMModelDomains/CASMModelDomains.shp"
+
+CASMSummarySpreadsheet <- file.path(DataDirectory,"attenuation summaries.xlsx")
+
+source(file.path(ProjectDirectory,"R/CASM-PrePostProcessor/CASM_PrePostProcessorFunctions.R"))
+
+```
+
+Load the useful stuff from the "callibrated parameters" sheet from the CASM summary spreadsheet
+```{r}
+CASMOutputData <- read.xlsx(CASMSummarySpreadsheet,sheet="calibrated parameters",startRow = 2,cols=c(2:7))
+
+#Load a spatial file with the WMZ's in them. Note that this is a special manually edited file.
+SubZonePolygons <- readOGR(dsn =file.path(GISDataDirectory,SubZones),
+                           layer = SubZones)
+SubZonePolygons <- spTransform(SubZonePolygons,CRS("+init=epsg:2193") )
+
+#Find the zone name of each CASM Node, by parsing the node name
+CASMOutputData$Zone <- sub("-.*","",CASMOutputData$Node.Name)
+
+#Get the average zone attenuation. Note that the calibration was done at the zone level, so tere is no variation in attenuation within a zone, even if the land use and LUC vary.
+AttenuationByZone <- aggregate(CASMOutputData$Attenuation.Coeff,by = list(CASMOutputData$Zone),FUN=mean)
+
+#Add the attenuation to the spatial file
+SubZonePolygons@data$Attenuation <- AttenuationByZone$x[match(SubZonePolygons@data$Zone_Code,AttenuationByZone$Group.1)]
+
+#Cut the attributes down to a minimum
+SubZonePolygons@data <- SubZonePolygons@data[,c("Zone_Code","CASMDomain","Attenuation")]
+
+#Save the data to a new file
+writeOGR(SubZonePolygons,dsn = file.path(GISDataDirectory,"ZoneAttenuation"),"ZoneAttenuation",driver='ESRI Shapefile',overwrite_layer = TRUE)
+
+```
+
+Manipulate the data
+Get the max/min/average attenuation for each water management sub-zone
+```{r}
+
+```
+
