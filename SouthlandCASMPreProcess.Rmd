@@ -3,10 +3,6 @@ title: "R Notebook to preprocess water quality data for use with CASM, for Horiz
 output: html_notebook
 ---
 
-Load libraries
-```{r}
-```
-
 Some functions
 ```{r}
 source("CASM_PrePostProcessorFunctions.R")
@@ -28,7 +24,7 @@ GISDataDirectory  <- file.path(DataDirectory,"GIS")
 
 REC_rivers <- "SouthlandREC2"
 
-#REC_Catchments <- "RECV2-Watersheds-Southland"
+REC_Catchments <- "ESWaterShedsWithPlanClasses" #An ESRI polygon shape file with Environment Southland Plan Classses
 
 REC_MeanFlowFile <- file.path(DataDirectory,"REC2MeanFlow.RData")  #This is an RData file
 
@@ -42,25 +38,53 @@ EstuarySiteFile <- "Estuaries.csv"
 
 ExtraCASMNodeSiteFile <- "ExtraCASMNodes"  #An ESRI Point Shape File
 
+RiverOutletsFile <- "RiverMouthSites" #An ESRI Point Shape File
+
 MajorCatchmentsFile <- "FactsheetZoneAreas"   #An ESRI polygon shapefile
+
+GroundwaterZonesFile <- "Environment_Southland_Groundwater_Management_Zones_RWP_2010" #An ESRI polygon shapefile
+
+PhysiographicDataFile <- "Environment_Southland_Physiographic_Zones" #An ESRI polygon shapefile
+
+WaterPlanClassificationFile <- "WaterPlanClassification" #An ESRI Shape file
+
+WaterPlanClassificationRasterFile <- "ES_PlanClassification.tif" #A raster file
 
 ```
 
 
 load data
 ```{r}
+#Load the major catchments
+MajorCatchments <- readOGR(dsn =file.path(GISDataDirectory),
+                           layer = MajorCatchmentsFile, stringsAsFactors = FALSE)
+MajorCatchments <- spTransform(MajorCatchments,CRS("+init=epsg:2193") )
+#Ditch Fiordland and Stewart Island
+MajorCatchments <- MajorCatchments[-which(MajorCatchments$FactSheetZ %in% c("Fiordland","Stewart Island/ Rakiura Zone","Coastal Islands")),]
+#Ditch the NA catchemnts
+MajorCatchments <- MajorCatchments[!is.na(MajorCatchments$FactSheetZ),]
+
+#Create a full domain (with help to clean it from https://stackoverflow.com/questions/12663263/dissolve-holes-in-polygon-in-r )
+CompleteDomain <- gUnaryUnion(MajorCatchments)
+outerRings = Filter(function(f){f@ringDir==1},CompleteDomain@polygons[[1]]@Polygons)
+CompleteDomain = SpatialPolygons(list(Polygons(outerRings,ID=1)))
+crs(CompleteDomain) <- crs(MajorCatchments)
+
+
 #REC data has been sourced from LWP data stores. It has cut down versions of the attribute names, e.g. nzsegment is nzsgmnt. Keep an eye on this when comparing to other data sources that may have the full RECV2 attribute names.
 RECReachNetwork <- readOGR(dsn =file.path(GISDataDirectory),
                            layer = REC_rivers)
 
 RECReachNetwork <- spTransform(RECReachNetwork,CRS("+init=epsg:2193") )
+#REstrict it to just the major catchments of interest
+#RECReachNetwork <- gIntersection(RECReachNetwork,CompleteDomain,byid =TRUE)
 
-#RECWatersheds <- readOGR(dsn = file.path(GISDataDirectory,REC_Catchments),
-#                         layer = "RECV2-Watersheds-Horizons")
+#RECWatersheds <- readOGR(dsn = GISDataDirectory,
+#                         layer = REC_Catchments)
 #RECWatersheds <- spTransform(RECWatersheds,CRS("+init=epsg:2193") )
 
 #Load the mean flow data for the REC V2. This is provided in an rdata file which contains the data frame REC2MeanFlow, with three columns, "nzsegment","QMean", and "us_catarea"
-load(file.path(DataDirectory, REC_MeanFlowFile))
+#load(REC_MeanFlowFile)
 
 #Load the Southland water quality measurement site data
 MeasurementSites <- readOGR(dsn =file.path(GISDataDirectory),
@@ -83,20 +107,57 @@ ExtraSites <- readOGR(dsn =file.path(GISDataDirectory,ExtraCASMNodeSiteFile),
                            layer = ExtraCASMNodeSiteFile, stringsAsFactors = FALSE)
 ExtraSites <- spTransform(ExtraSites,CRS("+init=epsg:2193") )
 
+#Load the additional river mouth site locations
+RiverMouthSites <- readOGR(dsn =file.path(GISDataDirectory,RiverOutletsFile),
+                           layer = RiverOutletsFile, stringsAsFactors = FALSE)
+RiverMouthSites <- spTransform(RiverMouthSites,CRS("+init=epsg:2193") )
 
 #Load the estuary site data
 EstuarySites <- read.table(file.path(DataDirectory,EstuarySiteFile),header=TRUE,stringsAsFactors = FALSE, sep=",")
 #Create a spatial file from it
 EstuarySitesSpatial <- SpatialPointsDataFrame(coords = EstuarySites[,c("NZTME","NZTMN")],data = EstuarySites, proj4string = CRS("+init=epsg:2193"))
 
-#Load the major catchments
-MajorCatchments <- readOGR(dsn =file.path(GISDataDirectory),
-                           layer = MajorCatchmentsFile, stringsAsFactors = FALSE)
-MajorCatchments <- spTransform(MajorCatchments,CRS("+init=epsg:2193") )
-#Ditch Fiordland and Stewart Island
-MajorCatchments <- MajorCatchments[-which(MajorCatchments$FactSheetZ %in% c("Fiordland","Stewart Island/ Rakiura Zone","Coastal Islands")),]
-#Ditch the NA catchemnts
-MajorCatchments <- MajorCatchments[!is.na(MajorCatchments$FactSheetZ),]
+
+
+#Load the Physiographic Zones data
+Physiography <- readOGR(dsn =file.path(GISDataDirectory,PhysiographicDataFile),
+                           layer = PhysiographicDataFile)
+Physiography <- spTransform(Physiography,CRS("+init=epsg:2193") )
+
+#Convert to a raster with an attribute table, and  for mapping later on
+  #Convert to raster, note the creation of a base raster in WGS84, which all subsequent raster's align to
+  RasterBase <- raster(resolution = 250, ext = extent(MajorCatchments), crs = proj4string(MajorCatchments) )
+  PhysiographyRaster <- rasterize(Physiography,RasterBase,"Physiograp")
+  #Crop to the COmplete domain, and then mask to the same
+  PhysiographyRaster <- crop(PhysiographyRaster,extent(CompleteDomain))
+  PhysiographyRaster <- mask(PhysiographyRaster, CompleteDomain)
+  
+  PhysiographyRasterWGS84 <- projectRaster(PhysiographyRaster,crs = CRS("+init=epsg:4326"),method = "ngb")
+  PhysiographyRasterWGS84 <- ratify(PhysiographyRasterWGS84)
+  PhysiographyRAT <- levels(PhysiographyRasterWGS84)[[1]]
+  PhysiographyRAT$Physiography <- levels(Physiography$Physiograp)
+  levels(PhysiographyRasterWGS84)  <- PhysiographyRAT
+
+  #Load the Environment Southland Water Plan Classification spatial data
+#WaterPlanClassification <- readOGR(dsn = file.path(GISDataDirectory,WaterPlanClassificationFile), layer =WaterPlanClassificationFile, stringsAsFactors = FALSE)
+#WaterPlanClassification <- spTransform(WaterPlanClassification,CRS("+init=epsg:2193") )
+  
+    
+#Load the Water Plan classification raster data
+  WaterPlanRaster <- raster(WaterPlanClassificationRasterFile)
+  
+  #reproject to WGS84 for mapping
+  WaterPlanRasterWGS84 <- projectRaster(WaterPlanRaster,crs = CRS("+init=epsg:4326"),method = "ngb")
+  WaterPlanRasterWGS84 <- ratify(WaterPlanRasterWGS84)
+  WaterPlanClassRAT <- levels(WaterPlanRasterWGS84)[[1]]
+  WaterPlanClassRAT$WaterPlanClass <- c("Hills", "Lakes", "Lowland Hardbed", "Lowland Softbed", "Mountain", "Natural State")
+  levels(WaterPlanRasterWGS84)  <- WaterPlanClassRAT
+
+#Load the Groundwater Management Zone data
+GroundwaterZones <- readOGR(dsn =file.path(GISDataDirectory,GroundwaterZonesFile),
+                           layer = GroundwaterZonesFile, stringsAsFactors = FALSE)
+GroundwaterZones <- spTransform(GroundwaterZones,CRS("+init=epsg:2193") )
+
 
 #Load the point source sites
 #PointSourceSites <- read.csv(file.path(DataDirectory,"PointSourcesSummaryPC2_YE2012_04.csv"))
@@ -112,6 +173,7 @@ MajorCatchments <- MajorCatchments[!is.na(MajorCatchments$FactSheetZ),]
 
 ```
 
+Not sure if the following is needed anymore.
 Get the "nzsegment" attributes of the lowest reach in each of the major catchments
 ```{r}
 CatchmentReaches <- RECReachNetwork %over% MajorCatchments #Note this takes about a minute to do
@@ -119,11 +181,12 @@ RECReachNetwork$Catchment <- CatchmentReaches$FactSheetZ
 
 #Work through each management zone to find the reach with the greatest distance to the headwater (the hdw_dst attribute). . I tried doing this based on the least largest area (the CUM_ARE attribute) but there were some zero values, I also tried distance to the sea (the LENGTHD attribute, but near the coast I was getting small reaches that were not the main river channel, but were closer to the sea)
 MajorCatchmentOuteltReaches <- lapply(seq_along(MajorCatchments$FactSheetZ), function(SingleCatchment){
-  browser()
+  #browser()
   CurrentCatchment <- MajorCatchments$FactSheetZ[SingleCatchment]
   CurrentCatchmentReaches <- RECReachNetwork[RECReachNetwork$Catchment == CurrentCatchment,]
-  OutletReach <- CurrentCatchmentReaches$nzsegment[which.max(CurrentCatchmentReaches$headw_dist)]
-  return(data.frame(Catchment = CurrentCatchment,nzsegment = OutletReach))
+  #OutletReach <- CurrentCatchmentReaches$nzsegment[which.max(CurrentCatchmentReaches$headw_dist)]
+  OutletReach <- CurrentCatchmentReaches$nzsegment[which(CurrentCatchmentReaches$headw_dist > 30000 & CurrentCatchmentReaches$LENGTHDOWN < 500) ]
+  return(data.frame(Catchment = rep(CurrentCatchment,length(OutletReach)),nzsegment = OutletReach))
 })
 #Convert the list into a dataframe
 MajorCatchmentOuteltReachesDF <- do.call(rbind,MajorCatchmentOuteltReaches)
@@ -132,8 +195,8 @@ MajorCatchmentOuteltReachesDF <- do.call(rbind,MajorCatchmentOuteltReaches)
 
 From the load sites, point source sites, and water management subzones outlets, create the required network
 ```{r}
-#AllPoints <- c(MeasurementSites$nzsegment, PointSourceSites$nzsegment, MajorCatchmentOuteltReachesDF$nzsgmnt)
-AllPoints <- c(MeasurementSites$nzsegment, LakeSites$nzsegment, EstuarySites$nzsegment, ExtraSites$nzsegment, OutletReaches = MajorCatchmentOuteltReachesDF$nzsgmnt)
+#AllPoints <- c(MeasurementSites$nzsegment, PointSourceSites$nzsegment, MajorCatchmentOuteltReachesDF$nzsegment)
+AllPoints <- c(MeasurementSites$nzsegment, LakeSites$nzsegment, EstuarySites$nzsegment, ExtraSites$nzsegment, OutletReaches = RiverMouthSites$nzsegment)
 LoadNetwork <- lapply(AllPoints, function(x) {DownstreamReachFinder(RECNetwork = RECReachNetwork, SourceReach = x)} )
 CompleteNetwork <- unlist(LoadNetwork)
 CompleteNetwork <- CompleteNetwork[!duplicated(CompleteNetwork)]
@@ -244,55 +307,156 @@ names(DiffuseInputsSiteExtendedTable) <- c("Landuse","LUC","Zone_Code","Polygon 
 ```
 
 
-plot it
+An overview plot is required showing the various points and the underlying relevant spatial data.
+This plot is pre-modelling to share with the project  participants so that they can check that the points are in the right place.
+Chlopleth mapping is from here https://rstudio.github.io/leaflet/choropleths.html
+Raster mapping is from here https://stackoverflow.com/questions/59110756/failed-to-add-a-categorical-legend-in-leaflet-in-r-using-addlegendlabels
+
+Speed improvements were undertaken following https://stackoverflow.com/questions/44356224/leaflet-shiny-integration-slow
 ```{r}
-#Reproject the other spatial data to the maps projection ready for plotting
+library(rmapshaper)
+
+RECForMaps <- RECReachNetwork[sqrt(RECReachNetwork@data$CUM_AREA)/10000 > 1,]
+RECForMaps$LineWidthPixels <- as.integer(sqrt(RECForMaps@data$CUM_AREA)/10000)
+RECForMaps <- RECForMaps[,"LineWidthPixels"]
+RECForMaps <- ms_simplify(RECForMaps)
+
+MajorCatchments <- ms_simplify(MajorCatchments)
+
+#Reproject the vector spatial data to the maps projection ready for plotting
+#Note that the raster data was reprojected when it was loaded.
 #SpatialData <- list(MeasurementSites=MeasurementSitesSpatial, PointSourceSites=PointSourceSitesSpatial,
 #                    SubZones=SubZonePolygons,RiverNetwork=CompleteSpatialNetwork)
-SpatialData <- list(MeasurementSites=MeasurementSites,LakeSites=LakeSites,EstuarySites=EstuarySitesSpatial,ExtraSites=ExtraSites, RiverNetwork=CompleteSpatialNetwork,MajorCatchments=MajorCatchments)
-reprojected.data.WGS84 <- lapply(SpatialData, spTransform,CRS("+init=epsg:4326"))
+SpatialData <- list(MeasurementSites=MeasurementSites,LakeSites=LakeSites,EstuarySites=EstuarySitesSpatial,ExtraSites=ExtraSites,RiverMouthSites=RiverMouthSites, RiverNetwork=RECForMaps,MajorCatchments=MajorCatchments,GroundwaterZones=GroundwaterZones)
+MapData <- lapply(SpatialData, spTransform,CRS("+init=epsg:4326"))
 
+MapData$Physiography <- PhysiographyRasterWGS84
+MapData$WaterPlan <- WaterPlanRasterWGS84
 
-
-MeasurementSiteLabels <- lapply(seq(nrow(reprojected.data.WGS84$MeasurementSites@data)), function(i) {
+MeasurementSiteLabels <- lapply(seq(nrow(MapData$MeasurementSites@data)), function(i) {
   paste0("Measurement site:", '</br>', 
-          reprojected.data.WGS84$MeasurementSites@data[i, "sitename"]) 
+          MapData$MeasurementSites@data[i, "sitename"]) 
 })
 
-EstuarySiteLabels <- lapply(seq(nrow(reprojected.data.WGS84$EstuarySites@data)), function(i) {
+EstuarySiteLabels <- lapply(seq(nrow(MapData$EstuarySites@data)), function(i) {
   paste0("Estuary site:", '</br>', 
-          reprojected.data.WGS84$EstuarySites@data[i, "Name"]) 
+          MapData$EstuarySites@data[i, "Name"]) 
 })
 
-LakeSiteLabels <- lapply(seq(nrow(reprojected.data.WGS84$LakeSites@data)), function(i) {
+LakeSiteLabels <- lapply(seq(nrow(MapData$LakeSites@data)), function(i) {
   paste0("Lake site:", '</br>', 
-          reprojected.data.WGS84$LakeSites@data[i, "Lake_Name"]) 
+          MapData$LakeSites@data[i, "Lake_Name"]) 
 })
 
-ExtraSiteLabels <- lapply(seq(nrow(reprojected.data.WGS84$ExtraSites@data)), function(i) {
-  paste0("Extra site: ",  
-          reprojected.data.WGS84$ExtraSites@data[i, "id"],'</br>',reprojected.data.WGS84$ExtraSites@data[i, "Reason"]) 
+ExtraSiteLabels <- lapply(seq(nrow(MapData$ExtraSites@data)), function(i) {
+  paste0("Subcatchment site: ",  
+          MapData$ExtraSites@data[i, "id"],'</br>',MapData$ExtraSites@data[i, "Reason"]) 
+})
+
+RiverMouthSiteLabels <- lapply(seq(nrow(MapData$RiverMouthSites@data)), function(i) {
+  paste0("Rivermouth site: ",'</br>',MapData$RiverMouthSites@data[i, "River"]) 
 })
 
 
+#Setup the map
 map <- leaflet::leaflet() %>% 
   leaflet::addProviderTiles(providers$OpenStreetMap) %>%
-  setView(lng=168,lat=-46.0,zoom=9) %>% 
-  #addPolygons(data = reprojected.data.WGS84$SubZones, color = "black", weight = 3, fillColor = "transparent", label = ~htmlEscape(Zone_Code)) %>%
-  addCircleMarkers(data = reprojected.data.WGS84$MeasurementSites, color = "#FF3333",fillOpacity = 0.5, label = lapply(MeasurementSiteLabels, htmltools::HTML)) %>%
-  addCircleMarkers(data = reprojected.data.WGS84$LakeSites, color = "darkorange", fillOpacity = 0.5, label = lapply(LakeSiteLabels, htmltools::HTML)) %>%
-  addCircleMarkers(data = reprojected.data.WGS84$EstuarySites, color = "turquoise", fillOpacity = 0.5,label = lapply(EstuarySiteLabels, htmltools::HTML)) %>%
-  addCircleMarkers(data = reprojected.data.WGS84$ExtraSites, color = "#0066CC", fillOpacity = 0.5,label = lapply(ExtraSiteLabels, htmltools::HTML)) %>%
-  addPolylines(data = reprojected.data.WGS84$MajorCatchments, color= "black", label = ~htmlEscape(FactSheetZ)) %>%
-  addPolylines(data = reprojected.data.WGS84$RiverNetwork, color= "blue", label = ~htmlEscape(nzsegment)) %>%
-  addLegend("topright", colors = c("#FF3333","darkorange","turquoise","#0066CC"), labels = c("Measurement SItes","Lake Sites","Estuary Sites","Major subcatchments"),
+  setView(lng=168,lat=-46.0,zoom=9)
+
+#Add the main catchments
+Catchmentlabels <- sprintf(
+  "<strong>Major Catchment</strong><br/>%s ",
+  MapData$MajorCatchments@data$FactSheetZ
+) %>% lapply(htmltools::HTML)
+
+MCpal <- colorFactor("Dark2", domain = MapData$MajorCatchments@data$FactSheetZ)
+
+map <- map %>%
+  addPolygons(data=MapData$MajorCatchments,
+  fillOpacity = 0,
+  weight = 2,
+  opacity = 1,
+  color = "white",
+  highlight = highlightOptions(
+    weight = 5,
+    color = "#666"),
+  label = Catchmentlabels,
+  group="Major Catchments")
+
+#Add the groundwater zones
+GroundwaterLabels <- sprintf(
+  "<strong>Groundwater Zone</strong><br/>%s ",
+  MapData$GroundwaterZones@data$Groundwate
+) %>% lapply(htmltools::HTML)
+GWpal <- colorFactor("YlOrRd", domain = MapData$GroundwaterZones@data$OBJECTID)
+
+map <- map %>%
+  addPolygons(data=MapData$GroundwaterZones,
+  fillOpacity = 0,
+  weight = 2,
+  opacity = 1,
+  color = "white",
+  highlight = highlightOptions(
+    weight = 5,
+    color = "#666"),
+  label = GroundwaterLabels,
+  group="Groundwater Management Zones")
+
+#Add the Physiography raster
+Physpal <- colorFactor(rainbow(10), values(MapData$Physiography),
+                    na.color = "transparent")
+map <- map %>%
+  addRasterImage(MapData$Physiography, colors = Physpal, opacity = 0.8, group = "Physiographic Zones") %>%  
+  addLegend(pal = Physpal, 
+            values = values(MapData$Physiography),
+            title = "Physiography",
+            labFormat  = labelFormat(
+            transform = function(x) {
+              levels(MapData$Physiography)[[1]]$Physiography[which(levels(MapData$Physiography)[[1]]$ID == x)]
+            }),
+            layerId = "Physiography",
+            group="Physiographic Zones")
+
+#Add the Water Plan Classification raster
+WPpal <- colorFactor("Paired", values(MapData$WaterPlan),
+                    na.color = "transparent")
+map <- map %>%
+  addRasterImage(MapData$WaterPlan, colors = WPpal, opacity = 0.8, group = "Water Plan Classes") %>%  
+  addLegend(pal = WPpal, 
+            values = values(MapData$WaterPlan),
+            title = "Water Plan Classes",
+            labFormat  = labelFormat(
+            transform = function(x) {
+              levels(MapData$WaterPlan)[[1]]$WaterPlanClass[which(levels(MapData$WaterPlan)[[1]]$ID == x)]
+            }),
+            layerId = "Water Plan Classess",
+            group="Water Plan Classes")
+  
+
+map <- map %>%
+  addCircleMarkers(data = MapData$MeasurementSites, color = "#FF3333",fillOpacity = 0.5, label = lapply(MeasurementSiteLabels, htmltools::HTML)) %>%
+  addCircleMarkers(data = MapData$LakeSites, color = "darkorange", fillOpacity = 0.5, label = lapply(LakeSiteLabels, htmltools::HTML)) %>%
+  addCircleMarkers(data = MapData$EstuarySites, color = "turquoise", fillOpacity = 0.5,label = lapply(EstuarySiteLabels, htmltools::HTML)) %>%
+  addCircleMarkers(data = MapData$RiverMouthSites, color = "brown", fillOpacity = 0.5,label = lapply(RiverMouthSiteLabels, htmltools::HTML)) %>%
+  addCircleMarkers(data = MapData$ExtraSites, color = "#0066CC", fillOpacity = 0.5,label = lapply(ExtraSiteLabels, htmltools::HTML)) %>%
+  
+  addPolylines(data = MapData$RiverNetwork, color= "blue", weight = ~LineWidthPixels,group = "River Network") %>%
+  
+  addLegend("topright", colors = c("#FF3333","darkorange","turquoise","brown","lightblue"), labels = c("Measurement SItes","Lake Sites","Estuary Sites","River Mouth Sites","Subcatchment Sites"),
             title = "Sites",
-            opacity = 1)
+            opacity = 1) %>%
+  
+  addLayersControl(
+          overlayGroups =c("Major Catchments","Water Plan Classes","Physiographic Zones", "River Network", "Groundwater Management Zones"),
+          options = layersControlOptions(collapsed=FALSE)
+          ) %>%
+  
+  hideGroup(c("Major Catchments","Water Plan Classes","Groundwater Management Zones","River Network","Physiographic Zones"))
 
 map
 
 #save the mapdata as an R file so that it can be used in an RShinyApp
-saveRDS(reprojected.data.WGS84,file.path(ProjectDirectory,"/ShinyApp/Data","SpatialData.RDS"))
+saveRDS(MapData,file.path(ProjectDirectory,"/ShinyApp/Data","SpatialData.RDS"))
 ```
 
 
